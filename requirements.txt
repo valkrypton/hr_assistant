@@ -1,0 +1,18 @@
+# Core AI / LangChain
+langchain>=0.3
+langchain-core>=0.3
+langchain-community>=0.3
+langchain-ollama>=0.2        # Ollama provider
+langchain-openai>=0.2        # OpenAI, xAI (Grok), QWEN (OpenAI-compatible)
+langchain-anthropic>=0.3     # Anthropic / Claude
+
+# Database
+sqlalchemy>=2.0
+
+# Configuration
+python-dotenv>=1.0
+
+# API layer
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.0
