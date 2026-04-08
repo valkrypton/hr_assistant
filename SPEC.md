@@ -1,6 +1,6 @@
 # HR Intelligence Agent — Specification
 
-Natural-language workforce assistant accessible via WhatsApp and Slack,
+Natural-language workforce assistant accessible via Slack,
 backed by a hybrid SQL + AI-search engine against the company ERP.
 
 ---
@@ -11,12 +11,11 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 | ID | Requirement |
 |----|-------------|
-| FR-1.1 | Accept free-text questions in English via WhatsApp (personal message to agent number) |
-| FR-1.2 | Accept free-text questions in English via Slack (DM or `@hr-agent` mention in any channel) |
-| FR-1.3 | Return answers within 5 seconds for SQL-path queries, 15 seconds for hybrid queries |
-| FR-1.4 | Format responses for the channel: plain text on WhatsApp, rich Slack Block Kit cards with action buttons on Slack |
-| FR-1.5 | Support threaded replies in Slack (reply inside the thread of the original mention) |
-| FR-1.6 | Gracefully handle ambiguous queries by asking a single clarifying question before proceeding |
+| FR-1.1 | Accept free-text questions in English via Slack (DM or `@hr-agent` mention in any channel) |
+| FR-1.2 | Return answers within 5 seconds for SQL-path queries, 15 seconds for hybrid queries |
+| FR-1.3 | Format responses as rich Slack Block Kit cards with action buttons |
+| FR-1.4 | Support threaded replies in Slack (reply inside the thread of the original mention) |
+| FR-1.5 | Gracefully handle ambiguous queries by asking a single clarifying question before proceeding |
 
 ---
 
@@ -81,7 +80,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 | ID | Requirement |
 |----|-------------|
-| FR-5.1 | Identify the requesting user from their WhatsApp number (registered mapping) or Slack identity |
+| FR-5.1 | Identify the requesting user from their Slack identity |
 | FR-5.2 | Enforce four roles: **CTO/CEO**, **HR Manager**, **Department Head**, **Team Lead** |
 | FR-5.3 | CTO/CEO — full company-wide access: all workforce data, utilisation, bench time, attrition |
 | FR-5.4 | HR Manager — company-wide: employee details, skills, availability, leaves, utilisation, warnings, attrition |
@@ -96,7 +95,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 | ID | Requirement |
 |----|-------------|
-| FR-6.1 | Log every query with: requesting user identity, channel (WhatsApp/Slack), timestamp, raw question, data tables accessed, and row count returned |
+| FR-6.1 | Log every query with: requesting user identity, channel (Slack), timestamp, raw question, data tables accessed, and row count returned |
 | FR-6.2 | Store audit logs in an append-only table; do not delete or update entries |
 | FR-6.3 | Expose a `/audit` API endpoint for admin-level log retrieval (date range, user, table filters) |
 
@@ -106,7 +105,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 | ID | Requirement |
 |----|-------------|
-| FR-7.1 | Provide a CLI or admin API endpoint to register/deregister WhatsApp numbers and map them to employee roles |
+| FR-7.1 | Provide a CLI or admin API endpoint to register/deregister Slack users and map them to employee roles |
 | FR-7.2 | Require `INCLUDED_TABLES` configuration — an explicit whitelist of tables the agent may query; all other tables are invisible to the agent |
 | FR-7.3 | Support configurable thresholds via environment variables: bench duration, log-hour threshold, utilisation warning level |
 
@@ -166,7 +165,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 > Goal: every answer is scoped to the requester's permissions before it leaves the system
 
 **Tasks**
-- [ ] Create `users` table mapping employee ID → role → WhatsApp number → Slack user ID
+- [ ] Create `users` table mapping employee ID → role → Slack user ID
 - [ ] Implement `RBACContext` middleware in `core/`: injects allowed department/team scope into every SQL query and strips forbidden columns from results
 - [ ] Add role enforcement to the SQL agent prompt: inject a system prefix describing what the current user may and may not see
 - [ ] Write tests covering each role boundary (e.g. Team Lead cannot see another team's roster)
@@ -176,23 +175,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 ---
 
-### Phase 3 — WhatsApp Integration
-> Goal: send a text to the agent number, get an HR answer
-
-**Tasks**
-- [ ] Register Meta Business account and obtain WhatsApp Business API credentials
-- [ ] Implement `adapters/whatsapp.py`: webhook receiver for inbound messages (verify token handshake, parse message body, extract sender phone number)
-- [ ] Map phone number → employee role via the `users` table (FR-5.1); reject unregistered numbers with a polite error
-- [ ] Call `core.agent.query()` with the RBAC context and send the plain-text response back via the WhatsApp Send Message API
-- [ ] Handle WhatsApp 24-hour session window: send a template message to reopen the session when needed
-- [ ] Add `POST /webhook/whatsapp` route in `api/main.py`; secure with `X-Hub-Signature-256` verification
-- [ ] CLI tool to register/deregister WhatsApp numbers (FR-7.1)
-
-**Exit criteria:** An HR manager can send any FR-3/FR-4 query from their personal WhatsApp and receive a correctly scoped, formatted answer.
-
----
-
-### Phase 4 — Slack Integration
+### Phase 3 — Slack Integration
 > Goal: `@hr-agent` in any channel or DM returns a rich answer in-thread
 
 **Tasks**
@@ -208,7 +191,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 ---
 
-### Phase 5 — Hardening & Observability
+### Phase 4 — Hardening & Observability
 > Goal: production-ready reliability, cost tracking, and admin visibility
 
 **Tasks**
@@ -218,7 +201,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 - [ ] Retry logic and graceful degradation: if the AI call fails, return a user-friendly error rather than a stack trace
 - [ ] End-to-end test suite covering the 12 canonical query types from the proposal
 - [ ] Load test: verify 200 queries/day throughput target (NFR-2)
-- [ ] Secrets rotation guide: how to rotate WhatsApp, Slack, and AI API keys without downtime
+- [ ] Secrets rotation guide: how to rotate Slack and AI API keys without downtime
 
 **Exit criteria:** System passes load test, all canonical queries return correct results, audit log is queryable by admins.
 
@@ -226,7 +209,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 ## Canonical Query Test Suite
 
-These queries must return correct, role-scoped answers at the end of Phase 5:
+These queries must return correct, role-scoped answers at the end of Phase 4:
 
 | # | Query | Primary path |
 |---|-------|-------------|

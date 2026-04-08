@@ -112,6 +112,5 @@ What is Bilal Qureshi's competency score?
 | 0 — Foundation | Complete | Local prototype, SQLite seed, web UI |
 | 1 — Production Data Layer | In progress | Real PostgreSQL ERP, schema RAG, vector index |
 | 2 — RBAC | Planned | Role-scoped answers per requester |
-| 3 — WhatsApp | Planned | Natural language via WhatsApp Business API |
-| 4 — Slack | Planned | `@hr-agent` mentions with Block Kit cards |
-| 5 — Hardening | Planned | Rate limits, cost tracking, load testing |
+| 3 — Slack | Planned | `@hr-agent` mentions with Block Kit cards |
+| 4 — Hardening | Planned | Rate limits, cost tracking, load testing |

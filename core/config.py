@@ -34,8 +34,12 @@ class Settings:
     LIBRECHAT_MODEL = os.getenv("LIBRECHAT_MODEL", "xai/grok-4-0709")
     LIBRECHAT_BASE_URL = os.getenv("LIBRECHAT_BASE_URL", "https://litellm.arbisoft.com")
 
-    # Database
+    # ERP database — read-only; used exclusively by the SQL agent.
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./data/company.db")
+
+    # App database — writable; stores hr_assistant_users, audit logs, etc.
+    # Defaults to the same DB as DATABASE_URL for local dev convenience.
+    APP_DATABASE_URL: str = os.getenv("APP_DATABASE_URL", os.getenv("DATABASE_URL", "sqlite:///./data/app.db"))
 
     # Whitelist: only these tables are visible to the agent.
     # All other tables in the database are invisible to the agent.
