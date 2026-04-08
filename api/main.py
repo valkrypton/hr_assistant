@@ -23,6 +23,7 @@ from core.config import settings
 from core.agent import _build_agent, query
 from core.rbac.models import Base, HRUser
 from core.rbac.roles import Role
+from core.rbac.context import RBACContext
 from api.admin import HRUserAdmin
 
 
@@ -84,6 +85,7 @@ admin.add_view(HRUserAdmin)
 
 class QueryRequest(BaseModel):
     query: str
+    slack_user_id: Optional[str] = None  # when set, RBAC scope is enforced
 
 
 class QueryResponse(BaseModel):
@@ -137,8 +139,21 @@ def query_endpoint(request: QueryRequest):
     """Accept a natural-language HR question and return an answer from the ERP."""
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query must not be empty.")
+
+    rbac_ctx = None
+    if request.slack_user_id:
+        with Session(_app_engine()) as session:
+            user = (
+                session.query(HRUser)
+                .filter_by(slack_user_id=request.slack_user_id, is_active=True)
+                .first()
+            )
+        if not user:
+            raise HTTPException(status_code=403, detail="Slack user not registered.")
+        rbac_ctx = RBACContext.for_user(user)
+
     try:
-        answer = query(request.query)
+        answer = query(request.query, rbac_ctx=rbac_ctx)
         return QueryResponse(answer=answer)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

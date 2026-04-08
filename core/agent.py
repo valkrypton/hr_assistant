@@ -121,28 +121,35 @@ def get_agent():
 # Query — retrieve schema context at call time, inject into user message
 # ---------------------------------------------------------------------------
 
-def query(user_input: str) -> str:
+def query(user_input: str, rbac_ctx=None) -> str:
     """
     Run a natural-language HR query and return the answer string.
 
-    Before invoking the agent, relevant sections of schema.md are retrieved
-    via semantic search and prepended to the user message.  Only the top-k
-    most relevant chunks are included, keeping prompt size proportional to
-    query complexity rather than the full schema size.
+    Steps:
+    1. Retrieve top-k relevant schema sections via semantic search.
+    2. Prepend RBAC scope constraints (if an RBACContext is provided).
+    3. Invoke the SQL agent with the enriched message.
+    4. Post-process the response through rbac_ctx.strip_forbidden() as a
+       defence-in-depth measure against prompt-injection or LLM non-compliance.
     """
     from core.context.schema_index import retrieve as retrieve_schema
 
     schema_chunks = retrieve_schema(user_input, k=4)
+    schema_block = "\n\n---\n\n".join(schema_chunks) if schema_chunks else ""
 
-    if schema_chunks:
-        schema_block = "\n\n---\n\n".join(schema_chunks)
-        enriched_input = (
-            f"[Relevant schema context for this question]\n\n"
-            f"{schema_block}\n\n"
-            f"[Question]\n{user_input}"
-        )
-    else:
-        enriched_input = user_input
+    parts = []
+    if rbac_ctx is not None:
+        parts.append(f"[Access control rules for this request]\n{rbac_ctx.scope_prompt()}")
+    if schema_block:
+        parts.append(f"[Relevant schema context for this question]\n\n{schema_block}")
+    parts.append(f"[Question]\n{user_input}")
+
+    enriched_input = "\n\n".join(parts)
 
     result = get_agent().invoke({"input": enriched_input})
-    return result.get("output", str(result))
+    answer = result.get("output", str(result))
+
+    if rbac_ctx is not None:
+        answer = rbac_ctx.strip_forbidden(answer)
+
+    return answer
