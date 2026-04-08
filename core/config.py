@@ -39,5 +39,9 @@ class Settings:
         t.strip() for t in os.getenv("INCLUDED_TABLES", "").split(",") if t.strip()
     ]
 
+    # Vector index
+    VECTOR_STORE_PATH: str = os.getenv("VECTOR_STORE_PATH", "./data/chroma")
+    VECTOR_EMBEDDING_MODEL: str = os.getenv("VECTOR_EMBEDDING_MODEL", "nomic-embed-text")
+
 
 settings = Settings()

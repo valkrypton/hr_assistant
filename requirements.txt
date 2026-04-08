@@ -8,9 +8,14 @@ langchain-anthropic>=0.3     # Anthropic / Claude
 
 # Database
 sqlalchemy>=2.0
+psycopg2-binary>=2.9     # PostgreSQL driver
 
 # Configuration
 python-dotenv>=1.0
+
+# Vector index (semantic search)
+chromadb>=0.5
+langchain-chroma>=0.1
 
 # API layer
 fastapi>=0.115
