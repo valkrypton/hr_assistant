@@ -125,7 +125,24 @@ def query(user_input: str) -> str:
     """
     Run a natural-language HR query and return the answer string.
 
+    Before invoking the agent, relevant sections of schema.md are retrieved
+    via semantic search and prepended to the user message.  Only the top-k
+    most relevant chunks are included, keeping prompt size proportional to
+    query complexity rather than the full schema size.
     """
+    from core.context.schema_index import retrieve as retrieve_schema
 
-    result = get_agent().invoke({"input": user_input})
+    schema_chunks = retrieve_schema(user_input, k=4)
+
+    if schema_chunks:
+        schema_block = "\n\n---\n\n".join(schema_chunks)
+        enriched_input = (
+            f"[Relevant schema context for this question]\n\n"
+            f"{schema_block}\n\n"
+            f"[Question]\n{user_input}"
+        )
+    else:
+        enriched_input = user_input
+
+    result = get_agent().invoke({"input": enriched_input})
     return result.get("output", str(result))
