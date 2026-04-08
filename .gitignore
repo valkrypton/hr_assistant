@@ -1,4 +1,16 @@
+# Environment
 .env
-.idea
-.venv
-data
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

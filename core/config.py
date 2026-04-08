@@ -33,9 +33,10 @@ class Settings:
     # Database
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./data/company.db")
 
-    # Comma-separated list of table names the AI must never query
-    IGNORED_TABLES: list[str] = [
-        t.strip() for t in os.getenv("IGNORED_TABLES", "").split(",") if t.strip()
+    # Whitelist: only these tables are visible to the agent.
+    # All other tables in the database are invisible to the agent.
+    INCLUDED_TABLES: list[str] = [
+        t.strip() for t in os.getenv("INCLUDED_TABLES", "").split(",") if t.strip()
     ]
 
 

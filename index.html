@@ -24,7 +24,27 @@
       max-width: 680px;
     }
 
-    h1 { font-size: 1.3rem; font-weight: 600; margin-bottom: 24px; color: #111; }
+    h1 { font-size: 1.3rem; font-weight: 600; margin-bottom: 4px; color: #111; }
+    .subtitle { font-size: 0.85rem; color: #6b7280; margin-bottom: 20px; }
+
+    .examples {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .example {
+      font-size: 0.8rem;
+      padding: 5px 10px;
+      background: #f0f0ff;
+      color: #4f46e5;
+      border: 1px solid #c7d2fe;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: background .15s;
+      white-space: nowrap;
+    }
+    .example:hover { background: #e0e7ff; }
 
     textarea {
       width: 100%;
@@ -73,6 +93,20 @@
 <body>
   <div class="card">
     <h1>HR Assistant</h1>
+    <p class="subtitle">Ask anything about your workforce in plain English.</p>
+
+    <div class="examples" id="examples">
+      <span class="example">How many new joiners in 2025?</span>
+      <span class="example">Employees vs subcontractors hired in 2025</span>
+      <span class="example">Resignations by department</span>
+      <span class="example">Resignations by years of experience</span>
+      <span class="example">How many terminations in 2023?</span>
+      <span class="example">Who joined and left in the same year?</span>
+      <span class="example">How many Software Engineers do we have?</span>
+      <span class="example">What is Bilal Qureshi's competency score?</span>
+      <span class="example">Who's on leave next week?</span>
+      <span class="example">Show me the Engineering team</span>
+    </div>
 
     <textarea id="query" placeholder="Ask anything about employees, payroll, attendance…"></textarea>
     <button id="submit">Ask</button>
@@ -110,6 +144,13 @@
       } finally {
         btn.disabled = false;
       }
+    });
+
+    document.querySelectorAll('.example').forEach(el => {
+      el.addEventListener('click', () => {
+        document.getElementById('query').value = el.textContent;
+        btn.click();
+      });
     });
 
     document.getElementById('query').addEventListener('keydown', e => {

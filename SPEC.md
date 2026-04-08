@@ -107,7 +107,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 | ID | Requirement |
 |----|-------------|
 | FR-7.1 | Provide a CLI or admin API endpoint to register/deregister WhatsApp numbers and map them to employee roles |
-| FR-7.2 | Allow `IGNORED_TABLES` configuration to exclude sensitive tables from the agent's database context |
+| FR-7.2 | Require `INCLUDED_TABLES` configuration — an explicit whitelist of tables the agent may query; all other tables are invisible to the agent |
 | FR-7.3 | Support configurable thresholds via environment variables: bench duration, log-hour threshold, utilisation warning level |
 
 ---
@@ -127,29 +127,36 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 ## Development Phases
 
-### Phase 0 — Foundation  *(already complete)*
+### Phase 0 — Foundation  *(complete)*
 > Goal: working local prototype with web UI
 
 - [x] Project scaffold (`core/` + `api/` separation, no circular imports)
-- [x] SQLite seed database with 7 ERP-representative tables and realistic dummy data
-- [x] LangChain SQL agent wired to the database (`core/agent.py`)
+- [x] SQLite seed database — 7 tables, 32 employees with realistic exit, competency, and joiner data
+- [x] Extended `employees` schema: `competency_role`, `competency_score`, `exit_date`, `exit_type`
+- [x] LangChain SQL agent wired to the database (`core/agent.py`) via `create_sql_agent`
 - [x] Multi-provider LLM factory (`AI_PROVIDER` env var — Ollama default, OpenAI, Anthropic, xAI, QWEN)
-- [x] FastAPI `POST /query` endpoint with CORS for file:// origin
-- [x] Minimal `index.html` web UI (textarea + submit, Ctrl+Enter shortcut)
-- [x] `IGNORED_TABLES` access filtering
+- [x] FastAPI `POST /query` + `GET /health` with CORS for `file://` origin
+- [x] `index.html` web UI with example query chips, textarea, Ctrl+Enter shortcut
+- [x] `INCLUDED_TABLES` whitelist — agent only sees explicitly listed tables
+- [x] Agent prompt explicitly blocks salary and personal data from all responses
+- [x] `.gitignore` covering `.venv`, `data/company.db`, `__pycache__`, `.env`
+- [x] `CLAUDE.md`, `SPEC.md`, `skills.md` documentation
+- [x] `.claude/skills/hr-assistant/SKILL.md` project-local development skill
 
 ---
 
-### Phase 1 — Production Data Layer
+### Phase 1 — Production Data Layer  *(in progress)*
 > Goal: connect to real ERP, replace SQLite prototype with PostgreSQL
 
 **Tasks**
-- [ ] Switch `DATABASE_URL` to PostgreSQL; add `psycopg2-binary` or `asyncpg` to requirements
-- [ ] Map actual ERP table names to the schema the agent uses; add a DB view layer if column names differ
-- [ ] Implement `hr_records` fallback: detect when the table is absent and enable operational-signal proxy mode
-- [ ] Add nightly vector-index job: chunk project descriptions + daily log entries → embed → store in a vector DB (pgvector or Chroma)
-- [ ] Expose `/health` with a real DB connectivity check
-- [ ] Add `IGNORED_TABLES` defaults for salary and personal data columns
+- [x] Add `psycopg2-binary` to requirements
+- [x] `DATABASE_URL` now defaults to PostgreSQL format in `.env.example`
+- [x] `GET /health` performs a real DB connectivity check (returns 503 if unreachable)
+- [ ] Set `DATABASE_URL` in `.env` to the production connection string
+- [ ] Audit production table names; set `INCLUDED_TABLES` to only the tables the agent needs
+- [ ] Map ERP column names to agent expectations — add DB views if names differ significantly
+- [ ] Implement `hr_records` fallback: detect when the table is absent and surface operational-signal proxies
+- [ ] Add nightly vector-index job: chunk project descriptions + daily log entries → embed → store in pgvector or Chroma
 
 **Exit criteria:** Agent answers all FR-3 and FR-4 query types against live ERP data with correct results.
 
