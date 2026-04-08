@@ -20,13 +20,29 @@ _BASE_PREFIX = """You are an autonomous HR data analyst agent with direct, read-
 access to the company ERP database. Answer workforce questions by querying the
 database yourself — right now, without asking for anything first.
 
-CRITICAL RULES:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ROLE-BASED ACCESS CONTROL (ABSOLUTE RULES)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Every request includes an [Access control rules for this request] block.
+You MUST read and enforce it before writing any SQL or forming any answer.
+
+{rbac_prefix}
+
+These access rules are NON-NEGOTIABLE:
+- If a DATA SCOPE restricts results to a department or team, every SQL query
+  you write MUST include the required WHERE / JOIN condition. No exceptions.
+- If a column appears in the FORBIDDEN COLUMNS list, never include it in SQL
+  SELECT lists, never mention its value in your response, and never acknowledge
+  a question that asks for it. Respond: "That information is not available."
+- Silently enforce scope — do not tell the requester that data was withheld or
+  that they lack permission. Just return only what they are allowed to see.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CRITICAL OPERATIONAL RULES:
 - Run queries yourself using sql_db_query. Never ask the user for SQL or data.
 - SELECT only — never INSERT, UPDATE, DELETE, or DROP.
 - Present numbers, dates, and names in a human-friendly format.
 - Always include full name and department when listing employees.
-- NEVER expose in any response: salary, compensation, NIC numbers, bank details,
-  personal phone numbers, personal email, home addresses, or date of birth.
 - Provide only the direct answer — no narration, no SQL in the response, no
   "Running query now" commentary.
 
@@ -53,6 +69,15 @@ Column name gotchas:
   - Competency assessment: person_competency WHERE status = 2 AND is_enabled = true
 {hr_records_note}
 The schema context relevant to this specific question is provided in the user message."""
+
+
+_UNRESTRICTED_RBAC = """Current user role: UNRESTRICTED (full company-wide access).
+All employees, departments, and teams are visible.
+Still enforce the FORBIDDEN COLUMNS list above."""
+
+_RESTRICTED_RBAC = """Current user role: {role}
+{scope_description}
+Enforce both the DATA SCOPE and FORBIDDEN COLUMNS above on every query."""
 
 _HR_RECORDS_NOTE = """
 NO hr_records TABLE: For warnings/disciplinary queries use these proxies instead:
@@ -82,8 +107,15 @@ def _get_included_tables() -> list[str]:
     return list(settings.INCLUDED_TABLES)
 
 
-def _build_agent():
-    """Build the SQL agent — called once on first query."""
+def _build_agent(rbac_ctx=None):
+    """
+    Build the SQL agent with the given RBAC context baked into the system prefix.
+
+    When rbac_ctx is None the agent is built without scope restrictions (used
+    for the shared unauthenticated agent and for superuser access).  When a
+    context is provided, the role and scope are embedded in the prefix so the
+    LLM treats them as immutable system rules rather than advisory hints.
+    """
     llm = get_llm()
     included = _get_included_tables()
     db = SQLDatabase.from_uri(
@@ -93,7 +125,26 @@ def _build_agent():
     )
 
     hr_records_note = "" if _check_hr_records_available(db) else _HR_RECORDS_NOTE
-    prefix = _BASE_PREFIX.format(hr_records_note=hr_records_note)
+
+    if rbac_ctx is None or rbac_ctx.is_unrestricted:
+        rbac_prefix = _UNRESTRICTED_RBAC
+    else:
+        from core.rbac.roles import Role
+        scope_lines = rbac_ctx.scope_prompt().splitlines()
+        # First line is the FORBIDDEN COLUMNS line — already in the base prefix block.
+        # Extract just the DATA SCOPE line(s) for the restricted template.
+        scope_description = "\n".join(
+            ln for ln in scope_lines if ln.startswith("DATA SCOPE")
+        )
+        rbac_prefix = _RESTRICTED_RBAC.format(
+            role=rbac_ctx.role.value.upper().replace("_", " "),
+            scope_description=scope_description,
+        )
+
+    prefix = _BASE_PREFIX.format(
+        rbac_prefix=rbac_prefix,
+        hr_records_note=hr_records_note,
+    )
 
     return create_sql_agent(
         llm=llm,
@@ -106,15 +157,26 @@ def _build_agent():
     )
 
 
+# Shared agent for unauthenticated / superuser requests (built lazily).
 _agent = None
 
 
-def get_agent():
-    """Return the shared agent instance, building it on first call."""
+def get_agent(rbac_ctx=None):
+    """
+    Return an agent appropriate for the given RBAC context.
+
+    - No context / unrestricted → reuse the shared cached agent.
+    - Restricted role (dept_head / team_lead) → build a fresh agent with the
+      scope baked into the system prefix. These are not cached because each
+      user has a different scope.
+    """
     global _agent
-    if _agent is None:
-        _agent = _build_agent()
-    return _agent
+    if rbac_ctx is None or rbac_ctx.is_unrestricted:
+        if _agent is None:
+            _agent = _build_agent(rbac_ctx)
+        return _agent
+    # Restricted: build per-request so the prefix carries the exact scope.
+    return _build_agent(rbac_ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +208,7 @@ def query(user_input: str, rbac_ctx=None) -> str:
 
     enriched_input = "\n\n".join(parts)
 
-    result = get_agent().invoke({"input": enriched_input})
+    result = get_agent(rbac_ctx).invoke({"input": enriched_input})
     answer = result.get("output", str(result))
 
     if rbac_ctx is not None:

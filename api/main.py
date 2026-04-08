@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from sqladmin import Admin
 
 from core.config import settings
-from core.agent import _build_agent, query
+from core.agent import get_agent, query
 from core.rbac.models import Base, HRUser
 from core.rbac.roles import Role
 from core.rbac.context import RBACContext
@@ -48,7 +48,7 @@ def _erp_engine():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(_app_engine())
-    _build_agent()
+    get_agent()  # warm up the shared unrestricted agent on startup
     yield
 
 
