@@ -24,3 +24,6 @@ pydantic>=2.0
 
 # Admin panel
 sqladmin
+
+# Testing
+pytest
