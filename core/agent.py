@@ -89,7 +89,7 @@ def _build_agent():
     db = SQLDatabase.from_uri(
         settings.DATABASE_URL,
         include_tables=included,
-        sample_rows_in_table_info=3,
+        sample_rows_in_table_info=0,
     )
 
     hr_records_note = "" if _check_hr_records_available(db) else _HR_RECORDS_NOTE
@@ -100,7 +100,7 @@ def _build_agent():
         db=db,
         verbose=True,
         prefix=prefix,
-        max_iterations=15,
+        max_iterations=30,
         agent_type="tool-calling",
         agent_executor_kwargs={"handle_parsing_errors": True},
     )
