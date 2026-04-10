@@ -13,8 +13,9 @@ from typing import Optional
 
 import sqlalchemy
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqladmin import Admin
@@ -325,6 +326,92 @@ def get_audit_logs(
         )
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Slack webhook  (Phase 3 — FR-1.1, FR-5.1)
+# ---------------------------------------------------------------------------
+
+@app.post("/webhook/slack")
+async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Receive Slack Events API payloads.
+
+    Protocol:
+    1. Verify X-Slack-Signature — reject unsigned requests with 403.
+    2. Handle url_verification challenge (sent once during app setup).
+    3. Ack with 200 immediately — Slack requires a response within 3 seconds.
+    4. Dispatch the actual query to a background task so the agent has time
+       to run without holding the connection open.
+
+    Supported event types: app_mention, message (subtype: direct_message / im).
+    """
+    from adapters.slack import verify_signature, process_event
+    import logging
+    logger = logging.getLogger(__name__)
+
+    raw_body = await request.body()
+
+    # Step 1: URL verification challenge — handle before signature check.
+    # Slack sends this once during app setup to confirm the URL is reachable.
+    # Parse body directly (don't consume request.json() yet).
+    try:
+        import json as _json
+        _payload_peek = _json.loads(raw_body)
+    except Exception:
+        _payload_peek = {}
+
+    if _payload_peek.get("type") == "url_verification":
+        return JSONResponse({"challenge": _payload_peek.get("challenge", "")})
+
+    # Step 2: Verify signature on all other requests.
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    signature = request.headers.get("X-Slack-Signature", "")
+
+    logger.debug("Slack webhook — ts=%s sig=%s body_len=%d", timestamp, signature, len(raw_body))
+
+    if not verify_signature(
+        signing_secret=settings.SLACK_SIGNING_SECRET,
+        request_timestamp=timestamp,
+        request_body=raw_body,
+        slack_signature=signature,
+    ):
+        logger.warning("Slack signature verification failed — ts=%s sig=%s", timestamp, signature)
+        raise HTTPException(status_code=403, detail="Invalid Slack signature.")
+
+    payload = _payload_peek
+    event_type = payload.get("type")
+
+    # Step 2: Callback events — ack now, process in background.
+    if event_type == "event_callback":
+        event = payload.get("event", {})
+        etype = event.get("type")
+        # Ignore messages sent by bots (including ourselves) to avoid loops.
+        if event.get("bot_id") or event.get("subtype") == "bot_message":
+            return JSONResponse({"ok": True})
+
+        if etype in ("app_mention", "message"):
+            slack_user_id = event.get("user")
+            text = event.get("text", "").strip()
+            channel = event.get("channel", "")
+            # Use thread_ts if already in a thread; otherwise start one with ts.
+            thread_ts = event.get("thread_ts") or event.get("ts", "")
+
+            # Strip the bot mention prefix from app_mention events (<@BOTID> text).
+            if etype == "app_mention":
+                import re
+                text = re.sub(r"^<@[A-Z0-9]+>\s*", "", text).strip()
+
+            if slack_user_id and text:
+                background_tasks.add_task(
+                    process_event,
+                    slack_user_id=slack_user_id,
+                    text=text,
+                    channel=channel,
+                    thread_ts=thread_ts,
+                )
+
+    return JSONResponse({"ok": True})
 
 
 if __name__ == "__main__":

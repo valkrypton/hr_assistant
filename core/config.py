@@ -47,6 +47,10 @@ class Settings:
         t.strip() for t in os.getenv("INCLUDED_TABLES", "").split(",") if t.strip()
     ]
 
+    # Slack integration (Phase 3)
+    SLACK_BOT_TOKEN: str = os.getenv("SLACK_BOT_TOKEN", "")
+    SLACK_SIGNING_SECRET: str = os.getenv("SLACK_SIGNING_SECRET", "")
+
     # Vector index
     VECTOR_STORE_PATH: str = os.getenv("VECTOR_STORE_PATH", "./data/chroma")
     VECTOR_EMBEDDING_MODEL: str = os.getenv("VECTOR_EMBEDDING_MODEL", "nomic-embed-text")

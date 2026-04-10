@@ -25,5 +25,9 @@ pydantic>=2.0
 # Admin panel
 sqladmin
 
+# Slack integration
+slack_sdk>=3.0
+certifi
+
 # Testing
 pytest
