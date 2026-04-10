@@ -153,7 +153,10 @@ def _build_agent(rbac_ctx=None):
         prefix=prefix,
         max_iterations=30,
         agent_type="tool-calling",
-        agent_executor_kwargs={"handle_parsing_errors": True},
+        agent_executor_kwargs={
+            "handle_parsing_errors": True,
+            "return_intermediate_steps": True,
+        },
     )
 
 
@@ -180,19 +183,52 @@ def get_agent(rbac_ctx=None):
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _extract_tables(intermediate_steps) -> str:
+    """
+    Parse table names from sql_db_query tool calls in the agent's intermediate
+    steps and return them as a sorted, comma-separated string.
+
+    intermediate_steps is a list of (AgentAction, observation) tuples.
+    AgentAction.tool == "sql_db_query" and AgentAction.tool_input holds the SQL.
+    """
+    import re
+    tables: set[str] = set()
+    for action, _ in intermediate_steps or []:
+        tool = getattr(action, "tool", None)
+        sql = getattr(action, "tool_input", None)
+        if tool != "sql_db_query" or not sql:
+            continue
+        if isinstance(sql, dict):
+            sql = sql.get("query", "")
+        # Extract identifiers after FROM and JOIN keywords.
+        for match in re.finditer(
+            r'\b(?:FROM|JOIN)\s+([`"\[]?[\w]+[`"\]]?)', sql, re.IGNORECASE
+        ):
+            tables.add(match.group(1).strip('`"[]'))
+    return ", ".join(sorted(tables)) if tables else ""
+
+
+# ---------------------------------------------------------------------------
 # Query — retrieve schema context at call time, inject into user message
 # ---------------------------------------------------------------------------
 
-def query(user_input: str, rbac_ctx=None) -> str:
+def query(user_input: str, rbac_ctx=None) -> tuple[str, str]:
     """
-    Run a natural-language HR query and return the answer string.
+    Run a natural-language HR query.
+
+    Returns:
+        (answer, tables_accessed) — tables_accessed is a comma-separated string
+        of table names touched during the query (may be empty string).
 
     Steps:
     1. Retrieve top-k relevant schema sections via semantic search.
     2. Prepend RBAC scope constraints (if an RBACContext is provided).
     3. Invoke the SQL agent with the enriched message.
-    4. Post-process the response through rbac_ctx.strip_forbidden() as a
-       defence-in-depth measure against prompt-injection or LLM non-compliance.
+    4. Extract accessed tables from intermediate steps.
+    5. Post-process the response through rbac_ctx.strip_forbidden().
     """
     from core.context.schema_index import retrieve as retrieve_schema
 
@@ -210,8 +246,9 @@ def query(user_input: str, rbac_ctx=None) -> str:
 
     result = get_agent(rbac_ctx).invoke({"input": enriched_input})
     answer = result.get("output", str(result))
+    tables_accessed = _extract_tables(result.get("intermediate_steps", []))
 
     if rbac_ctx is not None:
         answer = rbac_ctx.strip_forbidden(answer)
 
-    return answer
+    return answer, tables_accessed

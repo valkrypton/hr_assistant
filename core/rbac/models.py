@@ -1,21 +1,13 @@
 """
-SQLAlchemy model for the hr_assistant_users table.
+SQLAlchemy models for the HR Assistant app database.
 
-This table lives in the same PostgreSQL database as the ERP but is owned
-by this application — the agent never sees it (it is not in INCLUDED_TABLES).
+All tables here live in APP_DATABASE_URL (never the ERP).
+The agent never sees these tables — they are not in INCLUDED_TABLES.
 
-Schema
+Tables
 ------
-hr_assistant_users
-  id               SERIAL PRIMARY KEY
-  employee_id      INTEGER NOT NULL          -- references person.id in the ERP
-  role             VARCHAR(20) NOT NULL      -- Role enum value
-  slack_user_id    VARCHAR(20) UNIQUE        -- Slack member ID, e.g. U01ABCDEF
-  department_id    INTEGER                   -- scope for DEPT_HEAD
-  team_id          INTEGER                   -- scope for TEAM_LEAD
-  is_active        BOOLEAN NOT NULL DEFAULT TRUE
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
-  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+hr_assistant_users   — registered users with roles and Slack identity
+hr_assistant_audit   — append-only query audit log (FR-6)
 """
 from datetime import datetime, timezone
 
@@ -25,6 +17,7 @@ from sqlalchemy import (
     DateTime,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase
@@ -73,4 +66,50 @@ class HRUser(Base):
         return (
             f"<HRUser id={self.id} employee_id={self.employee_id} "
             f"role={self.role} slack={self.slack_user_id}>"
+        )
+
+
+class AuditLog(Base):
+    """
+    Append-only audit log for every query made through the HR agent (FR-6).
+
+    Rows are never updated or deleted — enforce this at the DB level by
+    revoking UPDATE/DELETE on this table from the app role.
+
+    Schema
+    ------
+    hr_assistant_audit
+      id               SERIAL PRIMARY KEY
+      slack_user_id    VARCHAR(20)            -- NULL for unauthenticated requests
+      employee_id      INTEGER                -- NULL for unauthenticated requests
+      role             VARCHAR(20)            -- NULL for unauthenticated requests
+      question         TEXT NOT NULL          -- raw user question
+      answer           TEXT                   -- agent response (may be NULL on error)
+      tables_accessed  VARCHAR(500)           -- comma-separated tables used
+      error            TEXT                   -- populated if query raised an exception
+      created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+    """
+    __tablename__ = "hr_assistant_audit"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    slack_user_id = Column(String(20), nullable=True, index=True)
+    employee_id = Column(Integer, nullable=True)
+    role = Column(String(20), nullable=True)
+
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)
+    tables_accessed = Column(String(500), nullable=True)
+    error = Column(Text, nullable=True)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<AuditLog id={self.id} slack={self.slack_user_id} "
+            f"role={self.role} at={self.created_at}>"
         )

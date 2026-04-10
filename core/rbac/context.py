@@ -154,9 +154,10 @@ class RBACContext:
         sanitised = text
         for col in found:
             import re
-            # Match the column name followed by its value (e.g. "salary: 120000")
+            # Match the column name followed by its value (e.g. "salary: 120000").
+            # Stop at comma, semicolon, or newline so we don't consume adjacent fields.
             sanitised = re.sub(
-                rf"(?i){re.escape(col)}\s*[:\-=]?\s*[\w\d,\.\s]+",
+                rf"(?i){re.escape(col)}\s*[:\-=]?\s*[^\n,;]+",
                 f"[{col.upper()} REDACTED]",
                 sanitised,
             )
