@@ -79,7 +79,9 @@ Column name gotchas:
   - Employee name  : person.full_name  (NOT first_name / last_name)
   - Hire date      : person.joining_date
   - Exit date      : person.separation_date  (NULL = still employed)
-  - Separation type: 2=Resignation  3=Termination  4=End of Contract
+  - Separation type: users_personresignation.separation_type  (NOT on person table)
+      2=Resignation  3=Termination  4=End of Contract; always filter status=1 (Approved)
+      Use last_working_day for exit-year filtering
   - Current team FK: person_team.nsubteam_id  → team.id
   - Approved leave : leave_record.status = 1
   - Log submitted  : person_week_log.is_completed = true
@@ -247,22 +249,23 @@ def query(user_input: str, rbac_ctx=None) -> QueryResult:
     4. Extract accessed tables from intermediate steps.
     5. Post-process the response through rbac_ctx.strip_forbidden().
     """
-    from core.context.schema_index import retrieve as retrieve_schema
+    from pathlib import Path
 
     t_total_start = time.monotonic()
 
-    # Step 1: Schema RAG
+    # Step 1: Load full schema — small enough (~3k tokens) to inject entirely.
+    # No chunking/RAG needed; avoids lossy retrieval and Chroma dependency.
     t_rag_start = time.monotonic()
-    schema_chunks = retrieve_schema(user_input, k=4)
+    _schema_path = Path(__file__).parent / "context" / "schema.md"
+    schema_block = _schema_path.read_text() if _schema_path.exists() else ""
     schema_rag_ms = int((time.monotonic() - t_rag_start) * 1000)
-    schema_block = "\n\n---\n\n".join(schema_chunks) if schema_chunks else ""
 
     # Step 2: Build enriched message
     parts = []
     if rbac_ctx is not None:
         parts.append(f"[Access control rules for this request]\n{rbac_ctx.scope_prompt()}")
     if schema_block:
-        parts.append(f"[Relevant schema context for this question]\n\n{schema_block}")
+        parts.append(f"[Full schema context]\n\n{schema_block}")
     parts.append(f"[Question]\n{user_input}")
     enriched_input = "\n\n".join(parts)
 

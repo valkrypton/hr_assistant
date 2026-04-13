@@ -55,13 +55,16 @@ def _chunk_schema() -> list[dict]:
         elif part.startswith("## "):
             lines = part.splitlines()
             current_section = lines[0].lstrip("# ").strip()
-            chunks.append(
-                {
-                    "text": part,
-                    "section": current_section,
-                    "subsection": "",
-                }
-            )
+            # Only store ## chunks that have meaningful body content (not just a header line).
+            body = "\n".join(lines[1:]).strip()
+            if body:
+                chunks.append(
+                    {
+                        "text": part,
+                        "section": current_section,
+                        "subsection": "",
+                    }
+                )
 
     return chunks
 

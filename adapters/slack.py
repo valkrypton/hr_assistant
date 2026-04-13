@@ -79,9 +79,12 @@ def _format_blocks(answer: str) -> list[dict]:
         [ Divider ]
         [ Context — "HR Assistant • powered by AI" ]
     """
+    # Escape characters Slack's mrkdwn parser treats as special link syntax.
+    safe = answer.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
     # Slack block text has a 3000-char limit per section block.
     MAX = 2900
-    body = answer if len(answer) <= MAX else answer[:MAX] + "…"
+    body = safe if len(safe) <= MAX else safe[:MAX] + "…"
 
     return [
         {

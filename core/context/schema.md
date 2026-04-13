@@ -184,15 +184,37 @@ Per-project breakdown of hours within a weekly log.
 | `name` | Level name (e.g. "Junior", "Mid", "Senior", "Lead") |
 | `value` | Numeric level — higher = more senior |
 
-### `users_personresignation`
+### Resignations, Terminations, and Exits — `users_personresignation`
+
+Use this table for any query about resigned employees, terminations, attrition, how many people left, separation records, or exit counts. **`separation_type` lives here, NOT on the `person` table.** This is the only authoritative source for exit data.
 
 | Column | Meaning |
 |--------|---------|
 | `person_id` | FK → person |
 | `resignation_date` | Date resignation was submitted |
-| `last_working_day` | Last day at the company |
+| `last_working_day` | Last day at the company — use this for exit-year filtering |
 | `separation_type` | 2=Resignation, 3=Termination, 4=End of Contract |
-| `status` | 0=Pending, 1=Approved, 2=Revoked |
+| `status` | 0=Pending, 1=Approved, 2=Revoked — **always filter `status = 1` (Approved)** |
+
+**Canonical query patterns:**
+```sql
+-- Count resignations in a given year
+SELECT COUNT(*) FROM users_personresignation
+WHERE separation_type = 2 AND status = 1
+  AND EXTRACT(YEAR FROM last_working_day) = <year>;
+
+-- Count terminations in a given year
+SELECT COUNT(*) FROM users_personresignation
+WHERE separation_type = 3 AND status = 1
+  AND EXTRACT(YEAR FROM last_working_day) = <year>;
+
+-- Resignations by department
+SELECT d.name, COUNT(*) FROM users_personresignation upr
+JOIN person p ON upr.person_id = p.id
+JOIN department d ON p.ndepartment_id = d.id
+WHERE upr.separation_type = 2 AND upr.status = 1
+GROUP BY d.name;
+```
 
 ### `core_personstatushistory`
 
@@ -213,11 +235,14 @@ Tracks all status transitions over time.
 - **"employed"** = `employment_type.type IN (1, 4, 5)` (Employee, Intern, EOR)
 - **"subcontractor"** = `employment_type.type IN (2, 3)` (Contract, Sub-contractor)
 
-### Active vs Exited Employees
+### Active vs Exited Employees — resignations, terminations, attrition, how many resigned, who left
 - Use `person.is_active = true` to filter active employees.
 - Use `person.separation_date IS NOT NULL` to identify exited employees.
-- For resignations specifically: query `users_personresignation WHERE separation_type = 2 AND status = 1`.
-- For terminations: `users_personresignation WHERE separation_type = 3` or `person.status_id = 12`.
+- **All resignation/termination counts must use `users_personresignation`** — `separation_type` is NOT a column on `person`.
+- Resignations: `WHERE separation_type = 2 AND status = 1` (status=1 = Approved; always required).
+- Terminations: `WHERE separation_type = 3 AND status = 1`.
+- Filter by year: `EXTRACT(YEAR FROM last_working_day) = <year>` — use `last_working_day`, not `resignation_date`.
+- Example — resignations in 2025: `SELECT COUNT(*) FROM users_personresignation WHERE separation_type = 2 AND status = 1 AND EXTRACT(YEAR FROM last_working_day) = 2025`
 
 ### Bench / Non-Billable
 - A person is on bench when their current `person_team` assignment (`end_date IS NULL AND is_active = true`) has `billable = false`.
@@ -245,6 +270,9 @@ Tracks all status transitions over time.
 - Break down by classification: join `employment_type` and group by `employment_type.type`.
 
 ### Attrition / Resignations
-- Join `users_personresignation` on `person_id` to get exit records.
-- For same-year joiners who also left: compare `EXTRACT(YEAR FROM joining_date)` with `EXTRACT(YEAR FROM last_working_day)`.
-- Years of experience at exit: `last_working_day - person.joining_date`.
+- All exit data lives in `users_personresignation` — always join on `person_id`.
+- `separation_type` is a column on `users_personresignation`, **not** on `person`.
+- Always include `AND status = 1` (Approved) to exclude pending/revoked records.
+- Filter by year using `EXTRACT(YEAR FROM last_working_day)` — not `separation_date` or `resignation_date`.
+- For same-year joiners who also left: compare `EXTRACT(YEAR FROM person.joining_date)` with `EXTRACT(YEAR FROM upr.last_working_day)`.
+- Years of experience at exit: `upr.last_working_day - person.joining_date`.
