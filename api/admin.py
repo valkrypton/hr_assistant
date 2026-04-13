@@ -78,5 +78,8 @@ class AuditLogAdmin(ModelView, model=AuditLog):
         AuditLog.schema_rag_ms,
         AuditLog.agent_ms,
         AuditLog.total_ms,
+        AuditLog.prompt_tokens,
+        AuditLog.completion_tokens,
+        AuditLog.total_tokens,
         AuditLog.error,
     ]

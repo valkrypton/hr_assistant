@@ -20,10 +20,13 @@ logger = logging.getLogger(__name__)
 @dataclass
 class QueryResult:
     answer: str
-    tables_accessed: str   # comma-separated, may be empty string
-    schema_rag_ms: int     # Chroma retrieval time
-    agent_ms: int          # LLM + SQL execution time
-    total_ms: int          # full round-trip
+    tables_accessed: str      # comma-separated, may be empty string
+    schema_rag_ms: int        # Chroma retrieval time
+    agent_ms: int             # LLM + SQL execution time
+    total_ms: int             # full round-trip
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 # ---------------------------------------------------------------------------
 # Base prefix — only rules the DB cannot tell the agent itself.
@@ -263,9 +266,19 @@ def query(user_input: str, rbac_ctx=None) -> QueryResult:
     parts.append(f"[Question]\n{user_input}")
     enriched_input = "\n\n".join(parts)
 
-    # Step 3: Run agent
+    # Step 3: Run agent — capture token usage via OpenAI-compatible callback.
     t_agent_start = time.monotonic()
-    result = get_agent(rbac_ctx).invoke({"input": enriched_input})
+    try:
+        from langchain_community.callbacks import get_openai_callback
+        with get_openai_callback() as cb:
+            result = get_agent(rbac_ctx).invoke({"input": enriched_input})
+        prompt_tokens = cb.prompt_tokens
+        completion_tokens = cb.completion_tokens
+        total_tokens = cb.total_tokens
+    except Exception:
+        # Non-OpenAI provider or callback unavailable — run without tracking.
+        result = get_agent(rbac_ctx).invoke({"input": enriched_input})
+        prompt_tokens = completion_tokens = total_tokens = 0
     agent_ms = int((time.monotonic() - t_agent_start) * 1000)
 
     answer = result.get("output", str(result))
@@ -278,8 +291,8 @@ def query(user_input: str, rbac_ctx=None) -> QueryResult:
     total_ms = int((time.monotonic() - t_total_start) * 1000)
 
     logger.info(
-        "query completed — total=%dms  agent=%dms  rag=%dms  tables=%s",
-        total_ms, agent_ms, schema_rag_ms, tables_accessed or "none",
+        "query completed — total=%dms  agent=%dms  rag=%dms  tokens=%d  tables=%s",
+        total_ms, agent_ms, schema_rag_ms, total_tokens, tables_accessed or "none",
     )
 
     return QueryResult(
@@ -288,4 +301,7 @@ def query(user_input: str, rbac_ctx=None) -> QueryResult:
         schema_rag_ms=schema_rag_ms,
         agent_ms=agent_ms,
         total_ms=total_ms,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
     )

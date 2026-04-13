@@ -53,6 +53,9 @@ def query_endpoint(request: QueryRequest):
             schema_rag_ms=result.schema_rag_ms,
             agent_ms=result.agent_ms,
             total_ms=result.total_ms,
+            prompt_tokens=result.prompt_tokens or None,
+            completion_tokens=result.completion_tokens or None,
+            total_tokens=result.total_tokens or None,
         )
         return QueryResponse(answer=result.answer)
     except Exception as exc:

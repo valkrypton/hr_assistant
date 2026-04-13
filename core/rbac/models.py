@@ -107,6 +107,11 @@ class AuditLog(Base):
     agent_ms = Column(Integer, nullable=True)         # LLM + SQL execution time
     total_ms = Column(Integer, nullable=True)         # full round-trip
 
+    # Token usage (Phase 4)
+    prompt_tokens = Column(Integer, nullable=True)
+    completion_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,

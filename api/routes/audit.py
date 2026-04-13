@@ -23,6 +23,9 @@ class AuditLogResponse(BaseModel):
     schema_rag_ms: Optional[int]
     agent_ms: Optional[int]
     total_ms: Optional[int]
+    prompt_tokens: Optional[int]
+    completion_tokens: Optional[int]
+    total_tokens: Optional[int]
 
 
 @router.get("/audit", response_model=list[AuditLogResponse])
@@ -69,6 +72,9 @@ def get_audit_logs(
             schema_rag_ms=r.schema_rag_ms,
             agent_ms=r.agent_ms,
             total_ms=r.total_ms,
+            prompt_tokens=r.prompt_tokens,
+            completion_tokens=r.completion_tokens,
+            total_tokens=r.total_tokens,
         )
         for r in rows
     ]
