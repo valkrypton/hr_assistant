@@ -179,13 +179,13 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 > Goal: `@hr-agent` in any channel or DM returns a rich answer in-thread
 
 **Tasks**
-- [ ] Create Slack App with Bot Token + Event Subscriptions (`app_mention`, `message.im`)
-- [ ] Implement `adapters/slack.py`: event handler, URL verification challenge, extract user ID + message text
-- [ ] Map Slack user ID → employee role via the `users` table
-- [ ] Call `core.agent.query()` with RBAC context; format response as Slack Block Kit (header, body text, optional action buttons for follow-up queries)
-- [ ] Post reply inside the original message thread (not as a new top-level message)
-- [ ] Add `POST /webhook/slack` route; verify `X-Slack-Signature` on every request
-- [ ] Create `#ask-hr` channel setup guide for admins
+- [x] Create Slack App with Bot Token + Event Subscriptions (`app_mention`, `message.im`)
+- [x] Implement `adapters/slack.py`: event handler, URL verification challenge, extract user ID + message text
+- [x] Map Slack user ID → employee role via the `users` table
+- [x] Call `core.agent.query()` with RBAC context; format response as Slack Block Kit (header, body text, optional action buttons for follow-up queries)
+- [x] Post reply inside the original message thread (not as a new top-level message)
+- [x] Add `POST /webhook/slack` route; verify `X-Slack-Signature` on every request
+- [x] Create `#ask-hr` channel setup guide for admins (`docs/slack-setup-guide.md`)
 
 **Exit criteria:** `@hr-agent Who is on the bench right now?` in any Slack channel returns a rich card scoped to the requester's role, replied in-thread.
 
