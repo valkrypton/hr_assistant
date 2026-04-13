@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from api.deps import app_engine, write_audit
+from api.deps import app_engine, check_rate_limit, write_audit
 from core.agent import query as agent_query
 from core.rbac.context import RBACContext
 from core.rbac.models import HRUser
@@ -39,6 +39,7 @@ def query_endpoint(request: QueryRequest):
         if not hr_user:
             raise HTTPException(status_code=403, detail="Slack user not registered.")
         rbac_ctx = RBACContext.for_user(hr_user)
+        check_rate_limit(request.slack_user_id)
 
     try:
         result = agent_query(request.query, rbac_ctx=rbac_ctx)

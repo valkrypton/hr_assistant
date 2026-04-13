@@ -3,9 +3,11 @@ Shared dependencies for the API layer.
 
 Provides engine factories and the audit-log writer used across multiple routes.
 """
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import sqlalchemy
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from core.config import settings
@@ -20,6 +22,34 @@ def app_engine():
 def erp_engine():
     """Read-only ERP engine — used only for the health check."""
     return sqlalchemy.create_engine(settings.DATABASE_URL)
+
+
+def check_rate_limit(slack_user_id: str) -> None:
+    """
+    Raise HTTP 429 if the user has hit RATE_LIMIT_PER_HOUR queries in the
+    last 60 minutes. Uses the audit log as the source of truth — no extra
+    table needed. Set RATE_LIMIT_PER_HOUR=0 to disable.
+    """
+    limit = settings.RATE_LIMIT_PER_HOUR
+    if limit <= 0:
+        return
+
+    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    with Session(app_engine()) as session:
+        count = (
+            session.query(AuditLog)
+            .filter(
+                AuditLog.slack_user_id == slack_user_id,
+                AuditLog.created_at >= since,
+            )
+            .count()
+        )
+
+    if count >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded — max {limit} queries per hour. Try again later.",
+        )
 
 
 def write_audit(

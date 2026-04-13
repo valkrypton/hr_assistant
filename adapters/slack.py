@@ -176,11 +176,37 @@ def process_event(
         employee_id = hr_user.employee_id
         role = hr_user.role
     else:
-        # Unregistered user — no RBAC context; agent runs without scope.
         rbac_ctx = None
         employee_id = None
         role = None
         logger.warning("Slack user %s is not registered in hr_assistant_users.", slack_user_id)
+
+    # Rate limit check — post a friendly message and bail if exceeded.
+    if hr_user:
+        from datetime import datetime, timedelta, timezone
+        from sqlalchemy.orm import Session
+        limit = settings.RATE_LIMIT_PER_HOUR
+        if limit > 0:
+            since = datetime.now(timezone.utc) - timedelta(hours=1)
+            with Session(_get_app_engine()) as session:
+                count = (
+                    session.query(AuditLog)
+                    .filter(
+                        AuditLog.slack_user_id == slack_user_id,
+                        AuditLog.created_at >= since,
+                    )
+                    .count()
+                )
+            if count >= limit:
+                try:
+                    client.chat_postMessage(
+                        channel=channel,
+                        thread_ts=thread_ts,
+                        text=f"You've reached the limit of {limit} queries per hour. Please try again later.",
+                    )
+                except Exception:
+                    pass
+                return
 
     try:
         result = agent_query(text, rbac_ctx=rbac_ctx)
