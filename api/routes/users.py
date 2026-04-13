@@ -8,7 +8,7 @@ from api.deps import app_engine
 from core.rbac.models import HRUser
 from core.rbac.roles import Role
 
-router = APIRouter(prefix="/admin/users")
+router = APIRouter(prefix="/users")
 
 
 class UserCreate(BaseModel):

@@ -130,7 +130,7 @@ Every person who will use HR Assistant must be registered with a role. This cont
 
 **Option B — API**
 ```bash
-curl -X POST https://your-server/admin/users \
+curl -X POST https://your-server/users \
   -H "Content-Type: application/json" \
   -d '{
     "employee_id": 42,
