@@ -6,7 +6,7 @@ standalone (scripts, tests, notebooks) without starting a web server.
 """
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
@@ -266,21 +266,45 @@ def query(user_input: str, rbac_ctx=None) -> QueryResult:
     parts.append(f"[Question]\n{user_input}")
     enriched_input = "\n\n".join(parts)
 
-    # Step 3: Run agent — capture token usage via OpenAI-compatible callback.
+    # Step 3: Run agent with retry — up to 2 retries on transient failures.
     t_agent_start = time.monotonic()
-    try:
-        from langchain_community.callbacks import get_openai_callback
-        with get_openai_callback() as cb:
-            result = get_agent(rbac_ctx).invoke({"input": enriched_input})
-        prompt_tokens = cb.prompt_tokens
-        completion_tokens = cb.completion_tokens
-        total_tokens = cb.total_tokens
-    except Exception:
-        # Non-OpenAI provider or callback unavailable — run without tracking.
-        result = get_agent(rbac_ctx).invoke({"input": enriched_input})
-        prompt_tokens = completion_tokens = total_tokens = 0
-    agent_ms = int((time.monotonic() - t_agent_start) * 1000)
+    last_exc: Exception | None = None
+    result = None
+    prompt_tokens = completion_tokens = total_tokens = 0
 
+    for attempt in range(3):
+        if attempt > 0:
+            wait = 2 ** attempt  # 2s, 4s
+            logger.warning("Agent attempt %d failed, retrying in %ds: %s", attempt, wait, last_exc)
+            time.sleep(wait)
+        try:
+            from langchain_community.callbacks import get_openai_callback
+            with get_openai_callback() as cb:
+                result = get_agent(rbac_ctx).invoke({"input": enriched_input})
+            prompt_tokens = cb.prompt_tokens
+            completion_tokens = cb.completion_tokens
+            total_tokens = cb.total_tokens
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            # Reset cached agent on failure so next attempt gets a fresh one.
+            global _agent
+            _agent = None
+
+    if result is None:
+        # All retries exhausted — return a user-friendly message, don't raise.
+        logger.error("Agent failed after 3 attempts: %s", last_exc)
+        total_ms = int((time.monotonic() - t_total_start) * 1000)
+        return QueryResult(
+            answer="Sorry, I wasn't able to process your request right now. Please try again in a moment.",
+            tables_accessed="",
+            schema_rag_ms=schema_rag_ms,
+            agent_ms=int((time.monotonic() - t_agent_start) * 1000),
+            total_ms=total_ms,
+        )
+
+    agent_ms = int((time.monotonic() - t_agent_start) * 1000)
     answer = result.get("output", str(result))
     tables_accessed = _extract_tables(result.get("intermediate_steps", []))
 
