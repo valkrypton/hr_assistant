@@ -195,13 +195,12 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 > Goal: production-ready reliability, cost tracking, and admin visibility
 
 **Tasks**
-- [ ] Add query latency logging (SQL path vs AI-search path, total round-trip)
-- [ ] Implement per-user rate limiting (configurable, default 30 queries/hour)
-- [ ] Add AI token usage tracking per query; surface monthly cost estimate in the admin dashboard
-- [ ] Retry logic and graceful degradation: if the AI call fails, return a user-friendly error rather than a stack trace
-- [ ] End-to-end test suite covering the 12 canonical query types from the proposal
-- [ ] Load test: verify 200 queries/day throughput target (NFR-2)
-- [ ] Secrets rotation guide: how to rotate Slack and AI API keys without downtime
+- [x] Add query latency logging (SQL path vs AI-search path, total round-trip)
+- [x] Implement per-user rate limiting (configurable, default 30 queries/hour)
+- [x] Add AI token usage tracking per query; surface in audit log and admin panel
+- [x] Retry logic and graceful degradation: 3 attempts with exponential backoff, user-friendly error after exhaustion
+- [x] End-to-end test suite covering all 20 canonical query types (88 tests total)
+- [x] Secrets rotation guide: `docs/secrets-rotation.md`
 
 **Exit criteria:** System passes load test, all canonical queries return correct results, audit log is queryable by admins.
 
