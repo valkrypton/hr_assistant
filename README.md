@@ -5,7 +5,7 @@ Natural-language workforce assistant that answers HR queries in plain English, b
 ## Features
 
 - **Natural language to SQL** — LangChain SQL agent translates free-text questions into safe SELECT queries
-- **Schema-aware RAG** — relevant schema context is retrieved per query via semantic search (Chroma), not embedded in every prompt
+- **Full schema context** — complete schema reference injected into every prompt; no chunking or vector search needed
 - **Multi-provider LLM** — swap between Ollama (local), OpenAI, Anthropic, xAI/Grok, or QWEN via one env var
 - **Read-only by design** — INSERT / UPDATE / DELETE / DROP are blocked at the prompt level
 - **Privacy enforcement** — salary, NIC, phone, email, and date of birth are never surfaced in responses
@@ -15,25 +15,29 @@ Natural-language workforce assistant that answers HR queries in plain English, b
 
 ```
 core/   — AI agent logic (zero dependency on api/)
-  agent.py              — LangChain SQL agent, query-time schema RAG
+  agent.py              — LangChain SQL agent; injects full schema.md on every query
   config.py             — Settings loaded from .env
   providers/factory.py  — LLM factory (Ollama / OpenAI / Anthropic / xAI / QWEN)
-  vector_index.py       — Chroma index over team/project descriptions (semantic search)
+  vector_index.py       — Chroma index over team/project descriptions (FR-4 semantic search)
   context/
     schema.md           — Authoritative schema reference (tables, columns, business rules)
-    schema_index.py     — Chunks schema.md and builds "hr_schema" Chroma collection
 
 api/    — FastAPI HTTP layer (imports from core only)
-  main.py               — POST /query, GET /health, CORS
+  main.py               — App setup, middleware, admin panel, router registration
+  routes/               — query, health, audit, users, slack endpoints
+  admin.py              — SQLAdmin views
+
+adapters/
+  slack.py              — Slack Events API handler (signature verification, Block Kit replies)
 
 scripts/
-  reindex.py            — Rebuild Chroma collections (--erp and/or --schema flags)
+  reindex.py            — Rebuild ERP content Chroma index (run nightly)
 
 index.html              — Single-file web UI (no server needed, works from file://)
 ```
 
 **Request flow:**
-`index.html` → `POST /query` → `core.agent.query()` → schema RAG + LangChain SQL agent → PostgreSQL
+`index.html` / Slack → `POST /query` / `POST /webhook/slack` → `core.agent.query()` → LangChain SQL agent → PostgreSQL
 
 ## Setup
 
@@ -47,26 +51,26 @@ Edit `.env`:
 
 | Variable | Description |
 |---|---|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `AI_PROVIDER` | `ollama` (default) \| `openai` \| `anthropic` \| `xai` \| `qwen` |
+| `DATABASE_URL` | PostgreSQL connection string (ERP, read-only) |
+| `APP_DATABASE_URL` | PostgreSQL connection string (app DB — users, audit logs) |
+| `AI_PROVIDER` | `ollama` (default) \| `openai` \| `anthropic` \| `xai` \| `qwen` \| `librechat` |
 | `INCLUDED_TABLES` | Comma-separated whitelist of tables the agent may query |
-| `VECTOR_STORE_PATH` | Where to persist Chroma DB (default: `./data/chroma`) |
-| `VECTOR_EMBEDDING_MODEL` | Ollama embedding model (default: `nomic-embed-text`) |
+| `SLACK_BOT_TOKEN` | Slack bot OAuth token (`xoxb-…`) |
+| `SLACK_SIGNING_SECRET` | Slack signing secret for request verification |
+| `RATE_LIMIT_PER_HOUR` | Max queries per user per hour (default: 30; set 0 to disable) |
+| `VECTOR_STORE_PATH` | Where to persist Chroma DB for ERP semantic search (default: `./data/chroma`) |
+| `VECTOR_EMBEDDING_MODEL` | Ollama embedding model for ERP search (default: `nomic-embed-text`) |
 
-### Embedding model (Ollama only)
+### ERP semantic search index (FR-4 only)
 
-```bash
-ollama pull nomic-embed-text   # 274 MB, recommended
-# or use any model already installed, e.g. llama3.2:3b
-```
-
-### Build vector indices
+Only needed if you want "who has Sabre API experience?"-style queries over free-text project/log data:
 
 ```bash
-python scripts/reindex.py --schema   # schema section index (run once, or after schema.md changes)
-python scripts/reindex.py --erp      # team/project descriptions index (run nightly)
-python scripts/reindex.py            # rebuild both
+ollama pull nomic-embed-text          # 274 MB embedding model
+python scripts/reindex.py             # index team/project descriptions
 ```
+
+Schedule `scripts/reindex.py` nightly to keep the index fresh.
 
 ## Running
 
@@ -77,6 +81,7 @@ open index.html    # or just open in your browser — no server needed
 
 - API: `http://localhost:8000`
 - Docs: `http://localhost:8000/docs`
+- Admin: `http://localhost:8000/admin`
 - Health check: `GET /health` — returns 503 if DB is unreachable
 
 ## LLM Providers
@@ -110,7 +115,7 @@ What is Bilal Qureshi's competency score?
 | Phase | Status | Goal |
 |---|---|---|
 | 0 — Foundation | Complete | Local prototype, SQLite seed, web UI |
-| 1 — Production Data Layer | In progress | Real PostgreSQL ERP, schema RAG, vector index |
-| 2 — RBAC | Planned | Role-scoped answers per requester |
-| 3 — Slack | Planned | `@hr-agent` mentions with Block Kit cards |
-| 4 — Hardening | Planned | Rate limits, cost tracking, load testing |
+| 1 — Production Data Layer | Complete | Real PostgreSQL ERP, full schema context |
+| 2 — RBAC | Complete | Role-scoped answers per requester |
+| 3 — Slack | Complete | `@hr-agent` mentions with Block Kit cards |
+| 4 — Hardening | Complete | Rate limits, token tracking, retry logic, E2E tests |
