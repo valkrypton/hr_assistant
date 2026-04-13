@@ -4,12 +4,26 @@ HR Agent - core layer.
 This module has NO dependency on the API layer.  It can be imported and used
 standalone (scripts, tests, notebooks) without starting a web server.
 """
+import logging
+import time
+from dataclasses import dataclass
 
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 
 from core.config import settings
 from core.providers.factory import get_llm
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class QueryResult:
+    answer: str
+    tables_accessed: str   # comma-separated, may be empty string
+    schema_rag_ms: int     # Chroma retrieval time
+    agent_ms: int          # LLM + SQL execution time
+    total_ms: int          # full round-trip
 
 # ---------------------------------------------------------------------------
 # Base prefix — only rules the DB cannot tell the agent itself.
@@ -217,13 +231,11 @@ def _extract_tables(intermediate_steps) -> str:
 # Query — retrieve schema context at call time, inject into user message
 # ---------------------------------------------------------------------------
 
-def query(user_input: str, rbac_ctx=None) -> tuple[str, str]:
+def query(user_input: str, rbac_ctx=None) -> QueryResult:
     """
     Run a natural-language HR query.
 
-    Returns:
-        (answer, tables_accessed) — tables_accessed is a comma-separated string
-        of table names touched during the query (may be empty string).
+    Returns a QueryResult with answer, tables_accessed, and latency breakdown.
 
     Steps:
     1. Retrieve top-k relevant schema sections via semantic search.
@@ -234,23 +246,46 @@ def query(user_input: str, rbac_ctx=None) -> tuple[str, str]:
     """
     from core.context.schema_index import retrieve as retrieve_schema
 
+    t_total_start = time.monotonic()
+
+    # Step 1: Schema RAG
+    t_rag_start = time.monotonic()
     schema_chunks = retrieve_schema(user_input, k=4)
+    schema_rag_ms = int((time.monotonic() - t_rag_start) * 1000)
     schema_block = "\n\n---\n\n".join(schema_chunks) if schema_chunks else ""
 
+    # Step 2: Build enriched message
     parts = []
     if rbac_ctx is not None:
         parts.append(f"[Access control rules for this request]\n{rbac_ctx.scope_prompt()}")
     if schema_block:
         parts.append(f"[Relevant schema context for this question]\n\n{schema_block}")
     parts.append(f"[Question]\n{user_input}")
-
     enriched_input = "\n\n".join(parts)
 
+    # Step 3: Run agent
+    t_agent_start = time.monotonic()
     result = get_agent(rbac_ctx).invoke({"input": enriched_input})
+    agent_ms = int((time.monotonic() - t_agent_start) * 1000)
+
     answer = result.get("output", str(result))
     tables_accessed = _extract_tables(result.get("intermediate_steps", []))
 
+    # Step 4: Redact forbidden columns
     if rbac_ctx is not None:
         answer = rbac_ctx.strip_forbidden(answer)
 
-    return answer, tables_accessed
+    total_ms = int((time.monotonic() - t_total_start) * 1000)
+
+    logger.info(
+        "query completed — total=%dms  agent=%dms  rag=%dms  tables=%s",
+        total_ms, agent_ms, schema_rag_ms, tables_accessed or "none",
+    )
+
+    return QueryResult(
+        answer=answer,
+        tables_accessed=tables_accessed,
+        schema_rag_ms=schema_rag_ms,
+        agent_ms=agent_ms,
+        total_ms=total_ms,
+    )

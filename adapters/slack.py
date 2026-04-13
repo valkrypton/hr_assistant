@@ -128,6 +128,9 @@ def _write_audit(
     answer: Optional[str] = None,
     tables_accessed: Optional[str] = None,
     error: Optional[str] = None,
+    schema_rag_ms: Optional[int] = None,
+    agent_ms: Optional[int] = None,
+    total_ms: Optional[int] = None,
 ) -> None:
     with Session(_get_app_engine()) as session:
         session.add(AuditLog(
@@ -138,6 +141,9 @@ def _write_audit(
             answer=answer,
             tables_accessed=tables_accessed,
             error=error,
+            schema_rag_ms=schema_rag_ms,
+            agent_ms=agent_ms,
+            total_ms=total_ms,
         ))
         session.commit()
 
@@ -177,22 +183,25 @@ def process_event(
         logger.warning("Slack user %s is not registered in hr_assistant_users.", slack_user_id)
 
     try:
-        answer, tables_accessed = agent_query(text, rbac_ctx=rbac_ctx)
+        result = agent_query(text, rbac_ctx=rbac_ctx)
 
         _write_audit(
             slack_user_id=slack_user_id,
             employee_id=employee_id,
             role=role,
             question=text,
-            answer=answer,
-            tables_accessed=tables_accessed or None,
+            answer=result.answer,
+            tables_accessed=result.tables_accessed or None,
+            schema_rag_ms=result.schema_rag_ms,
+            agent_ms=result.agent_ms,
+            total_ms=result.total_ms,
         )
 
         client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
-            blocks=_format_blocks(answer),
-            text=answer,  # fallback plain text for notifications
+            blocks=_format_blocks(result.answer),
+            text=result.answer,  # fallback plain text for notifications
         )
 
     except SlackApiError as exc:

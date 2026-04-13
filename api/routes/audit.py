@@ -20,6 +20,9 @@ class AuditLogResponse(BaseModel):
     answer: Optional[str]
     tables_accessed: Optional[str]
     error: Optional[str]
+    schema_rag_ms: Optional[int]
+    agent_ms: Optional[int]
+    total_ms: Optional[int]
 
 
 @router.get("/audit", response_model=list[AuditLogResponse])
@@ -63,6 +66,9 @@ def get_audit_logs(
             answer=r.answer,
             tables_accessed=r.tables_accessed,
             error=r.error,
+            schema_rag_ms=r.schema_rag_ms,
+            agent_ms=r.agent_ms,
+            total_ms=r.total_ms,
         )
         for r in rows
     ]

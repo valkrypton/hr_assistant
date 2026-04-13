@@ -102,6 +102,11 @@ class AuditLog(Base):
     tables_accessed = Column(String(500), nullable=True)
     error = Column(Text, nullable=True)
 
+    # Latency breakdown in milliseconds (Phase 4)
+    schema_rag_ms = Column(Integer, nullable=True)   # Chroma retrieval time
+    agent_ms = Column(Integer, nullable=True)         # LLM + SQL execution time
+    total_ms = Column(Integer, nullable=True)         # full round-trip
+
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,

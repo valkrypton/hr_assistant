@@ -60,9 +60,10 @@ class AuditLogAdmin(ModelView, model=AuditLog):
         AuditLog.role,
         AuditLog.question,
         AuditLog.tables_accessed,
+        AuditLog.total_ms,
         AuditLog.error,
     ]
-    column_sortable_list = [AuditLog.id, AuditLog.created_at, AuditLog.role]
+    column_sortable_list = [AuditLog.id, AuditLog.created_at, AuditLog.role, AuditLog.total_ms]
     column_searchable_list = [AuditLog.slack_user_id, AuditLog.question]
 
     column_details_list = [
@@ -74,5 +75,8 @@ class AuditLogAdmin(ModelView, model=AuditLog):
         AuditLog.question,
         AuditLog.answer,
         AuditLog.tables_accessed,
+        AuditLog.schema_rag_ms,
+        AuditLog.agent_ms,
+        AuditLog.total_ms,
         AuditLog.error,
     ]

@@ -41,16 +41,19 @@ def query_endpoint(request: QueryRequest):
         rbac_ctx = RBACContext.for_user(hr_user)
 
     try:
-        answer, tables_accessed = agent_query(request.query, rbac_ctx=rbac_ctx)
+        result = agent_query(request.query, rbac_ctx=rbac_ctx)
         write_audit(
             slack_user_id=request.slack_user_id,
             employee_id=hr_user.employee_id if hr_user else None,
             role=hr_user.role if hr_user else None,
             question=request.query,
-            answer=answer,
-            tables_accessed=tables_accessed or None,
+            answer=result.answer,
+            tables_accessed=result.tables_accessed or None,
+            schema_rag_ms=result.schema_rag_ms,
+            agent_ms=result.agent_ms,
+            total_ms=result.total_ms,
         )
-        return QueryResponse(answer=answer)
+        return QueryResponse(answer=result.answer)
     except Exception as exc:
         write_audit(
             slack_user_id=request.slack_user_id,

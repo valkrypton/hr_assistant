@@ -31,6 +31,9 @@ def write_audit(
     answer: Optional[str] = None,
     tables_accessed: Optional[str] = None,
     error: Optional[str] = None,
+    schema_rag_ms: Optional[int] = None,
+    agent_ms: Optional[int] = None,
+    total_ms: Optional[int] = None,
 ) -> None:
     """Append one row to the audit log in the app DB (FR-6.1 / FR-6.2)."""
     with Session(app_engine()) as session:
@@ -42,5 +45,8 @@ def write_audit(
             answer=answer,
             tables_accessed=tables_accessed,
             error=error,
+            schema_rag_ms=schema_rag_ms,
+            agent_ms=agent_ms,
+            total_ms=total_ms,
         ))
         session.commit()

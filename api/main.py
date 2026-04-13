@@ -8,9 +8,11 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from sqladmin import Admin
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.admin import AuditLogAdmin, HRUserAdmin
 from api.deps import app_engine
@@ -47,6 +49,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_ADMIN_CSS = b"""<style>
+  .table-responsive { overflow-x: hidden !important; }
+  .table td { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style></head>"""
+
+
+class AdminCSSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if (
+            request.url.path.startswith("/admin")
+            and "text/html" in response.headers.get("content-type", "")
+        ):
+            body = b"".join([chunk async for chunk in response.body_iterator])
+            body = body.replace(b"</head>", _ADMIN_CSS)
+            return HTMLResponse(content=body.decode(), status_code=response.status_code)
+        return response
+
+
+app.add_middleware(AdminCSSMiddleware)
 
 
 # ---------------------------------------------------------------------------
