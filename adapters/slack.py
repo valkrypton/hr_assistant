@@ -158,6 +158,58 @@ def _write_audit(
 
 
 # ---------------------------------------------------------------------------
+# Thread history  (FR: conversation continuity within a Slack thread)
+# ---------------------------------------------------------------------------
+
+_HISTORY_MAX_TURNS = 10  # max prior turns to include (5 exchanges)
+
+
+def _fetch_thread_history(
+    client: WebClient,
+    channel: str,
+    thread_ts: str,
+    bot_user_id: Optional[str],
+    current_text: str,
+) -> list[dict]:
+    """
+    Fetch prior messages in a Slack thread and return them as a list of
+    {"role": "user"|"assistant", "content": "..."} dicts, oldest first,
+    excluding the current (just-arrived) message.
+
+    Returns an empty list on any error so a history failure never blocks
+    the main query.
+    """
+    try:
+        resp = client.conversations_replies(
+            channel=channel,
+            ts=thread_ts,
+            limit=_HISTORY_MAX_TURNS + 5,  # fetch a few extra to account for skipped msgs
+        )
+        messages = resp.get("messages", [])
+    except Exception as exc:
+        logger.warning("Failed to fetch thread history: %s", exc)
+        return []
+
+    history: list[dict] = []
+    for msg in messages:
+        text = msg.get("text", "").strip()
+        if not text:
+            continue
+        is_bot = (bot_user_id and msg.get("user") == bot_user_id) or msg.get("bot_id")
+        # Skip the current message (it arrives as the last message in the thread).
+        if not is_bot and text == current_text:
+            continue
+        role = "assistant" if is_bot else "user"
+        # Strip Slack mrkdwn bot-mention prefix (e.g. "<@U123> ") from user messages.
+        if role == "user" and text.startswith("<@"):
+            text = text.split(">", 1)[-1].strip()
+        history.append({"role": role, "content": text})
+
+    # Keep only the most recent N turns.
+    return history[-_HISTORY_MAX_TURNS:]
+
+
+# ---------------------------------------------------------------------------
 # Core event processor  (runs in background — outside the 3-second window)
 # ---------------------------------------------------------------------------
 
@@ -217,8 +269,23 @@ def process_event(
                     pass
                 return
 
+    # Fetch bot's own user ID once so we can identify its messages in the thread.
     try:
-        result = agent_query(text, rbac_ctx=rbac_ctx)
+        bot_user_id = client.auth_test()["user_id"]
+    except Exception:
+        bot_user_id = None
+
+    # Fetch prior thread turns for conversation continuity.
+    conversation_history = _fetch_thread_history(
+        client=client,
+        channel=channel,
+        thread_ts=thread_ts,
+        bot_user_id=bot_user_id,
+        current_text=text,
+    )
+
+    try:
+        result = agent_query(text, rbac_ctx=rbac_ctx, conversation_history=conversation_history or None)
 
         _write_audit(
             slack_user_id=slack_user_id,

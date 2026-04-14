@@ -255,18 +255,23 @@ def _extract_tables(intermediate_steps) -> str:
 # Query — retrieve schema context at call time, inject into user message
 # ---------------------------------------------------------------------------
 
-def query(user_input: str, rbac_ctx=None) -> QueryResult:
+def query(
+    user_input: str,
+    rbac_ctx=None,
+    conversation_history: list[dict] | None = None,
+) -> QueryResult:
     """
     Run a natural-language HR query.
 
-    Returns a QueryResult with answer, tables_accessed, and latency breakdown.
+    Args:
+        user_input: The question to answer.
+        rbac_ctx: Optional RBAC context scoping the response.
+        conversation_history: Optional list of prior turns in the format
+            [{"role": "user"|"assistant", "content": "..."}].
+            Injected before the current question so the agent can resolve
+            follow-up references (e.g. "who are the newest ones?").
 
-    Steps:
-    1. Retrieve top-k relevant schema sections via semantic search.
-    2. Prepend RBAC scope constraints (if an RBACContext is provided).
-    3. Invoke the SQL agent with the enriched message.
-    4. Extract accessed tables from intermediate steps.
-    5. Post-process the response through rbac_ctx.strip_forbidden().
+    Returns a QueryResult with answer, tables_accessed, and latency breakdown.
     """
     from pathlib import Path
 
@@ -285,6 +290,12 @@ def query(user_input: str, rbac_ctx=None) -> QueryResult:
         parts.append(f"[Access control rules for this request]\n{rbac_ctx.scope_prompt()}")
     if schema_block:
         parts.append(f"[Full schema context]\n\n{schema_block}")
+    if conversation_history:
+        history_lines = []
+        for turn in conversation_history:
+            role = "User" if turn["role"] == "user" else "Assistant"
+            history_lines.append(f"{role}: {turn['content']}")
+        parts.append(f"[Conversation history — earlier turns in this thread]\n" + "\n".join(history_lines))
     parts.append(f"[Question]\n{user_input}")
     enriched_input = "\n\n".join(parts)
 
