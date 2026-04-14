@@ -6,7 +6,7 @@ standalone (scripts, tests, notebooks) without starting a web server.
 """
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class QueryResult:
     answer: str
     tables_accessed: str      # comma-separated, may be empty string
-    schema_rag_ms: int        # Chroma retrieval time
+    schema_rag_ms: int        # schema load time (file read, not RAG)
     agent_ms: int             # LLM + SQL execution time
     total_ms: int             # full round-trip
     prompt_tokens: int = 0
@@ -29,8 +29,17 @@ class QueryResult:
     total_tokens: int = 0
 
 # ---------------------------------------------------------------------------
-# Base prefix — only rules the DB cannot tell the agent itself.
-# Table/column docs are NOT here; they are retrieved at query time via RAG.
+# Build the forbidden-columns string once from the canonical set in rbac/context.
+# ---------------------------------------------------------------------------
+
+def _forbidden_columns_str() -> str:
+    from core.rbac.context import FORBIDDEN_COLUMNS
+    return ", ".join(sorted(FORBIDDEN_COLUMNS))
+
+
+# ---------------------------------------------------------------------------
+# Base prefix — immutable rules the DB cannot supply.
+# Full schema is injected at query time via the [Full schema context] block.
 # ---------------------------------------------------------------------------
 
 _BASE_PREFIX = """You are an autonomous HR data analyst agent with direct, read-only
@@ -38,34 +47,44 @@ access to the company ERP database. Answer workforce questions by querying the
 database yourself — right now, without asking for anything first.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PRIVACY — ABSOLUTE (all roles, every request)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+These columns must NEVER appear in any SELECT list or response:
+  {forbidden_columns}
+If asked for any of these, respond only: "That information is not available."
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ROLE-BASED ACCESS CONTROL (ABSOLUTE RULES)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Every request includes an [Access control rules for this request] block.
-You MUST read and enforce it before writing any SQL or forming any answer.
+Read and enforce it before writing any SQL.
 
 {rbac_prefix}
 
-These access rules are NON-NEGOTIABLE:
-- If a DATA SCOPE restricts results to a department or team, every SQL query
-  you write MUST include the required WHERE / JOIN condition. No exceptions.
-- If a column appears in the FORBIDDEN COLUMNS list, never include it in SQL
-  SELECT lists, never mention its value in your response, and never acknowledge
-  a question that asks for it. Respond: "That information is not available."
-- Silently enforce scope — do not tell the requester that data was withheld or
-  that they lack permission. Just return only what they are allowed to see.
+- DATA SCOPE restrictions apply to every SQL query — add required WHERE/JOIN. No exceptions.
+- Silently enforce scope — never tell the requester that data was withheld.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-CRITICAL OPERATIONAL RULES:
+OPERATIONAL RULES:
 - Run queries yourself using sql_db_query. Never ask the user for SQL or data.
-- SELECT only — never INSERT, UPDATE, DELETE, or DROP.
-- Always answer in complete, natural sentences. Never respond with a bare number
-  or a one-word answer. Example: say "There were 36 new joiners in 2025." not "36".
-- Present numbers, dates, and names in a human-friendly format.
-- Always include full name and department when listing employees.
-- Provide only the direct answer — no narration, no SQL in the response, no
-  "Running query now" commentary.
+- SELECT only — never INSERT, UPDATE, DELETE, DROP, or ALTER.
+- If a query returns 0 rows or COUNT = 0, answer that fact directly. Do not
+  retry with different SQL variations.
+- Provide only the direct answer — no narration, no SQL, no "Running query now"
+  commentary, no explanation of your approach.
 
-NON-DISCOVERABLE BUSINESS RULES (memorise these):
+RESPONSE FORMAT:
+- Always use complete sentences. Never return a bare number or one-word answer.
+  ✓ "There were 36 new joiners in 2025."   ✗ "36"
+- Employee lists (≤10): bullet list, each line = full name + department.
+- Employee lists (>10): bullet list + closing summary sentence with total count.
+- Counts / single values: one sentence.
+- Grouped / breakdown results: bullet list in "Label: value" format.
+- Dates: "12 Jan 2025" format, not ISO (2025-01-12).
+- Never output raw JSON or SQL in the response.
+
+NON-DISCOVERABLE BUSINESS RULES (these are not in the schema — memorise them):
 
 Status IDs (person.status_id — the status table is not queryable):
   10=Active  22=Active-B(Bench)  17=Probation
@@ -75,7 +94,7 @@ Employment classification (employment_type.type):
   employed     → type IN (1=Employee, 4=Intern, 5=EOR)
   subcontractor → type IN (2=Contract, 3=Sub-contractor)
 
-Column name gotchas:
+Column name traps — commonly hallucinated wrong values:
   - Employee name  : person.full_name  (NOT first_name / last_name)
   - Hire date      : person.joining_date
   - Exit date      : person.separation_date  (NULL = still employed)
@@ -89,16 +108,15 @@ Column name gotchas:
   - Current assignment: person_team WHERE end_date IS NULL AND is_active = true
   - Competency assessment: person_competency WHERE status = 2 AND is_enabled = true
 {hr_records_note}
-The schema context relevant to this specific question is provided in the user message."""
+The full database schema is in the [Full schema context] block of every request."""
 
 
 _UNRESTRICTED_RBAC = """Current user role: UNRESTRICTED (full company-wide access).
-All employees, departments, and teams are visible.
-Still enforce the FORBIDDEN COLUMNS list above."""
+All employees, departments, and teams are visible."""
 
 _RESTRICTED_RBAC = """Current user role: {role}
 {scope_description}
-Enforce both the DATA SCOPE and FORBIDDEN COLUMNS above on every query."""
+Enforce the DATA SCOPE above on every query."""
 
 _HR_RECORDS_NOTE = """
 NO hr_records TABLE: For warnings/disciplinary queries use these proxies instead:
@@ -163,6 +181,7 @@ def _build_agent(rbac_ctx=None):
         )
 
     prefix = _BASE_PREFIX.format(
+        forbidden_columns=_forbidden_columns_str(),
         rbac_prefix=rbac_prefix,
         hr_records_note=hr_records_note,
     )
