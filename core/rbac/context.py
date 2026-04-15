@@ -103,10 +103,11 @@ class RBACContext:
             if self.department_id:
                 return (
                     base
-                    + f"DATA SCOPE: restrict all results to department_id = {self.department_id}. "
-                    f"Always add a WHERE or JOIN condition filtering on the department table "
-                    f"to ensure only employees in this department are returned. "
-                    f"Do not reveal data for other departments.\n"
+                    + f"DATA SCOPE: you ONLY have access to department_id = {self.department_id}.\n"
+                    f"- Every query MUST include a WHERE or JOIN condition restricting results to department_id = {self.department_id}.\n"
+                    f"- If the question asks about any other department or team outside your department, "
+                    f"respond ONLY with: \"You don't have access to data outside your department.\"\n"
+                    f"- Never query or return employee data from any other department.\n"
                 )
             # Misconfigured — degrade to no access rather than full access.
             return base + "DATA SCOPE: no department assigned — return no employee data.\n"
@@ -115,10 +116,12 @@ class RBACContext:
             if self.team_id:
                 return (
                     base
-                    + f"DATA SCOPE: restrict all results to team_id = {self.team_id} "
-                    f"(via person_team.nsubteam_id). Always add a JOIN to person_team "
-                    f"filtering on nsubteam_id = {self.team_id} AND end_date IS NULL "
-                    f"AND is_active = true. Do not reveal data for other teams.\n"
+                    + f"DATA SCOPE: you ONLY have access to team_id = {self.team_id}.\n"
+                    f"- Every query MUST include a JOIN to person_team WHERE nsubteam_id = {self.team_id} "
+                    f"AND end_date IS NULL AND is_active = true.\n"
+                    f"- If the question asks about any other team or employees outside your team, "
+                    f"respond ONLY with: \"You don't have access to data outside your team.\"\n"
+                    f"- Never query or return employee data for any other team_id.\n"
                 )
             return base + "DATA SCOPE: no team assigned — return no employee data.\n"
 

@@ -232,15 +232,33 @@ def process_event(
 
     # Resolve identity and build RBAC context.
     hr_user = _lookup_user(slack_user_id)
-    if hr_user:
-        rbac_ctx = RBACContext.for_user(hr_user)
-        employee_id = hr_user.employee_id
-        role = hr_user.role
-    else:
-        rbac_ctx = None
-        employee_id = None
-        role = None
+    if not hr_user:
         logger.warning("Slack user %s is not registered in hr_assistant_users.", slack_user_id)
+        try:
+            client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text="You're not registered to use HR Assistant. Please ask your HR admin to add your Slack account.",
+            )
+        except Exception:
+            pass
+        return
+
+    if not hr_user.role:
+        logger.warning("Slack user %s has no role assigned.", slack_user_id)
+        try:
+            client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text="Your account has no role assigned. Please ask your HR admin to set your role.",
+            )
+        except Exception:
+            pass
+        return
+
+    rbac_ctx = RBACContext.for_user(hr_user)
+    employee_id = hr_user.employee_id
+    role = hr_user.role
 
     # Rate limit check — post a friendly message and bail if exceeded.
     if hr_user:
