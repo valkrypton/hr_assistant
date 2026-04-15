@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from sqladmin import Admin
 from starlette.middleware.base import BaseHTTPMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from api.admin import AuditLogAdmin, HRUserAdmin
 from api.deps import app_engine
@@ -43,6 +44,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
