@@ -137,6 +137,10 @@ def _write_audit(
     prompt_tokens: Optional[int] = None,
     completion_tokens: Optional[int] = None,
     total_tokens: Optional[int] = None,
+    user_lookup_ms: Optional[int] = None,
+    rate_check_ms: Optional[int] = None,
+    history_fetch_ms: Optional[int] = None,
+    slack_post_ms: Optional[int] = None,
 ) -> None:
     with Session(_get_app_engine()) as session:
         session.add(AuditLog(
@@ -153,6 +157,10 @@ def _write_audit(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            user_lookup_ms=user_lookup_ms,
+            rate_check_ms=rate_check_ms,
+            history_fetch_ms=history_fetch_ms,
+            slack_post_ms=slack_post_ms,
         ))
         session.commit()
 
@@ -231,7 +239,10 @@ def process_event(
     client = WebClient(token=settings.SLACK_BOT_TOKEN, ssl=ssl_ctx)
 
     # Resolve identity and build RBAC context.
+    t_lookup = time.monotonic()
     hr_user = _lookup_user(slack_user_id)
+    user_lookup_ms = int((time.monotonic() - t_lookup) * 1000)
+
     if not hr_user:
         logger.warning("Slack user %s is not registered in hr_assistant_users.", slack_user_id)
         try:
@@ -261,11 +272,13 @@ def process_event(
     role = hr_user.role
 
     # Rate limit check — post a friendly message and bail if exceeded.
+    rate_check_ms = 0
     if hr_user:
         from datetime import datetime, timedelta, timezone
         from sqlalchemy.orm import Session
         limit = settings.RATE_LIMIT_PER_HOUR
         if limit > 0:
+            t_rate = time.monotonic()
             since = datetime.now(timezone.utc) - timedelta(hours=1)
             with Session(_get_app_engine()) as session:
                 count = (
@@ -276,6 +289,7 @@ def process_event(
                     )
                     .count()
                 )
+            rate_check_ms = int((time.monotonic() - t_rate) * 1000)
             if count >= limit:
                 try:
                     client.chat_postMessage(
@@ -288,6 +302,7 @@ def process_event(
                 return
 
     # Fetch bot's own user ID once so we can identify its messages in the thread.
+    t_history = time.monotonic()
     try:
         bot_user_id = client.auth_test()["user_id"]
     except Exception:
@@ -301,9 +316,26 @@ def process_event(
         bot_user_id=bot_user_id,
         current_text=text,
     )
+    history_fetch_ms = int((time.monotonic() - t_history) * 1000)
 
     try:
         result = agent_query(text, rbac_ctx=rbac_ctx, conversation_history=conversation_history or None)
+
+        t_post = time.monotonic()
+        client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            blocks=_format_blocks(result.answer),
+            text=result.answer,  # fallback plain text for notifications
+        )
+        slack_post_ms = int((time.monotonic() - t_post) * 1000)
+
+        logger.info(
+            "process_event timing — user_lookup=%dms  rate_check=%dms  history=%dms"
+            "  agent=%dms  slack_post=%dms  total_agent_ms=%dms",
+            user_lookup_ms, rate_check_ms, history_fetch_ms,
+            result.agent_ms, slack_post_ms, result.total_ms,
+        )
 
         _write_audit(
             slack_user_id=slack_user_id,
@@ -318,13 +350,10 @@ def process_event(
             prompt_tokens=result.prompt_tokens or None,
             completion_tokens=result.completion_tokens or None,
             total_tokens=result.total_tokens or None,
-        )
-
-        client.chat_postMessage(
-            channel=channel,
-            thread_ts=thread_ts,
-            blocks=_format_blocks(result.answer),
-            text=result.answer,  # fallback plain text for notifications
+            user_lookup_ms=user_lookup_ms,
+            rate_check_ms=rate_check_ms,
+            history_fetch_ms=history_fetch_ms,
+            slack_post_ms=slack_post_ms,
         )
 
     except SlackApiError as exc:
