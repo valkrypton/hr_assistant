@@ -8,17 +8,20 @@ from typing import Optional
 
 import sqlalchemy
 from fastapi import HTTPException
+from functools import lru_cache
 from sqlalchemy.orm import Session
 
 from core.config import settings
 from core.rbac.models import AuditLog
 
 
+@lru_cache(maxsize=1)
 def app_engine():
     """Writable engine for our own tables (hr_assistant_users, audit logs, etc.)."""
     return sqlalchemy.create_engine(settings.APP_DATABASE_URL)
 
 
+@lru_cache(maxsize=1)
 def erp_engine():
     """Read-only ERP engine — used only for the health check."""
     return sqlalchemy.create_engine(settings.DATABASE_URL)

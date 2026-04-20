@@ -110,7 +110,12 @@ def _format_blocks(answer: str) -> list[dict]:
 
 def _get_app_engine():
     import sqlalchemy
-    return sqlalchemy.create_engine(settings.APP_DATABASE_URL)
+    global _app_engine
+    if _app_engine is None:
+        _app_engine = sqlalchemy.create_engine(settings.APP_DATABASE_URL)
+    return _app_engine
+
+_app_engine = None
 
 
 def _lookup_user(slack_user_id: str) -> Optional[HRUser]:
