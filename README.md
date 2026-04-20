@@ -61,6 +61,42 @@ Edit `.env`:
 | `VECTOR_STORE_PATH` | Where to persist Chroma DB for ERP semantic search (default: `./data/chroma`) |
 | `VECTOR_EMBEDDING_MODEL` | Ollama embedding model for ERP search (default: `nomic-embed-text`) |
 
+### Local ERP (no real ERP database)
+
+If you don't have a company ERP, use the seed script to create a local PostgreSQL database with realistic synthetic data (~500 employees).
+
+**1. Create a local PostgreSQL database:**
+
+```bash
+createdb hr_erp_local
+```
+
+**2. Point `DATABASE_URL` at it in `.env`:**
+
+```
+DATABASE_URL=postgresql://localhost/hr_erp_local
+```
+
+**3. Create tables and seed data:**
+
+```bash
+python scripts/seed_erp.py
+```
+
+This creates all ERP tables and populates them with 500 employees (420 active, 80 exited), 22 teams, leave records, weekly time logs, competency ratings, skill assignments, and job requisitions.
+
+| Flag | Effect |
+|---|---|
+| _(none)_ | Create tables + seed data |
+| `--reset` | Drop all ERP tables first, then recreate and seed |
+| `--tables-only` | DDL only — no data inserted |
+
+**4. Expose the tables to the agent** — add to `.env`:
+
+```
+INCLUDED_TABLES=department,employment_type,competency_role,competency_level,designation,leave_type,skill_category,person,team,person_team,leave_limit,person_leave_limit,leave_record,holiday_record,person_week_log,person_week_project,person_competency,users_personresignation,core_personstatushistory,core_personemploymenthistory,core_personemploymenttypehistory,person_skill_category,job_requisition,annual_review_response
+```
+
 ### ERP semantic search index (FR-4 only)
 
 Only needed if you want "who has Sabre API experience?"-style queries over free-text project/log data:
@@ -83,6 +119,93 @@ open index.html    # or just open in your browser — no server needed
 - Docs: `http://localhost:8000/docs`
 - Admin: `http://localhost:8000/admin`
 - Health check: `GET /health` — returns 503 if DB is unreachable
+
+## Slack Setup
+
+The bot handles `@hr-agent` mentions and direct messages via the Slack Events API.
+
+### 1. Create a Slack app
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**.
+2. Name it (e.g. `HR Assistant`) and pick your workspace.
+
+### 2. Set OAuth scopes
+
+Under **OAuth & Permissions → Scopes → Bot Token Scopes**, add:
+
+| Scope | Purpose |
+|---|---|
+| `app_mentions:read` | Receive `@hr-agent` mentions |
+| `chat:write` | Post replies |
+| `im:history` | Read DM threads for conversation continuity |
+| `im:read` | Receive DMs |
+| `im:write` | Open DM channels |
+| `channels:history` | Read thread history in public channels |
+
+Click **Install to Workspace** and copy the **Bot User OAuth Token** (`xoxb-…`).
+
+### 3. Get the signing secret
+
+Under **Basic Information → App Credentials**, copy the **Signing Secret**.
+
+### 4. Add credentials to `.env`
+
+```
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_SIGNING_SECRET=your-signing-secret
+```
+
+### 5. Expose the local server
+
+Slack must reach your server over HTTPS. Use [ngrok](https://ngrok.com) for local dev:
+
+```bash
+ngrok http 8000
+```
+
+Copy the `https://…ngrok-free.app` URL.
+
+### 6. Enable Event Subscriptions
+
+Under **Event Subscriptions**:
+
+- Toggle **Enable Events** on.
+- Set **Request URL** to `https://<your-ngrok-url>/webhook/slack`.
+  Slack will send a verification challenge — the server handles it automatically.
+- Under **Subscribe to bot events**, add:
+  - `app_mention`
+  - `message.im`
+
+Save changes.
+
+### 7. Register users
+
+The bot enforces RBAC — every Slack user must be registered with a role before they can query. Use the API:
+
+```bash
+# Register a user (replace values as needed)
+curl -X POST http://localhost:8000/users \
+  -H "Content-Type: application/json" \
+  -d '{
+    "employee_id": 1,
+    "role": "hr_manager",
+    "slack_user_id": "U012AB3CD"
+  }'
+```
+
+Available roles: `cto_ceo`, `hr_manager`, `dept_head`, `team_lead`.
+
+To find a user's Slack ID: open their Slack profile → **⋮** → **Copy member ID**.
+
+### 8. Test it
+
+Mention the bot in any channel it has been invited to, or send it a DM:
+
+```
+@hr-agent Who's been on bench for 2 months?
+```
+
+Replies arrive as threaded Block Kit cards within 15 seconds.
 
 ## LLM Providers
 
