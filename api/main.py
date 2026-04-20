@@ -17,7 +17,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from api.admin import AuditLogAdmin, HRUserAdmin
 from api.deps import app_engine
-from api.routes import audit, health, slack, users
+from api.routes import audit, health, query, slack, users
 from core.agent import get_agent
 from core.rbac.models import Base
 
@@ -88,6 +88,7 @@ admin.add_view(AuditLogAdmin)
 # ---------------------------------------------------------------------------
 
 app.include_router(health.router)
+app.include_router(query.router)
 app.include_router(users.router)
 app.include_router(audit.router)
 app.include_router(slack.router)
