@@ -17,3 +17,4 @@ Thumbs.db
 
 data/chroma/*
 !data/chroma/chroma.sqlite3
+model.json

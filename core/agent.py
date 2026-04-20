@@ -191,7 +191,7 @@ def _build_agent(rbac_ctx=None):
         db=db,
         verbose=True,
         prefix=prefix,
-        max_iterations=30,
+        max_iterations=10,
         agent_type="tool-calling",
         agent_executor_kwargs={
             "handle_parsing_errors": True,

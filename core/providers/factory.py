@@ -47,8 +47,8 @@ def get_llm() -> BaseChatModel:
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
             api_key=settings.LIBRECHAT_API_KEY,
-            model="xai/grok-4-0709",
-            base_url="https://litellm.arbisoft.com"
+            model=settings.LIBRECHAT_MODEL,
+            base_url=settings.LIBRECHAT_BASE_URL,
         )
 
     raise ValueError(
