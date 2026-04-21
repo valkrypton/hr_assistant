@@ -43,6 +43,13 @@ def get_llm() -> BaseChatModel:
             model=settings.QWEN_MODEL,
             base_url=settings.QWEN_BASE_URL,
         )
+    if provider == "librechat":
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            api_key=settings.LIBRECHAT_API_KEY,
+            model=settings.LIBRECHAT_MODEL,
+            base_url=settings.LIBRECHAT_BASE_URL,
+        )
 
     raise ValueError(
         f"Unsupported AI provider: '{provider}'. "

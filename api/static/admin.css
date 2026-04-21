@@ -1,0 +1,5 @@
+/* Intentionally left empty.
+ * Admin-specific CSS is injected by AdminCSSMiddleware rather than loaded
+ * from this static asset. Keeping this file free of duplicate rules avoids
+ * dead assets drifting out of sync with the active admin styling.
+ */

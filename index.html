@@ -1,120 +1,343 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>HR Assistant</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: system-ui, sans-serif;
-      background: #f4f5f7;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f5f5f5;
+      color: #1a1a1a;
+      min-height: 100vh;
       display: flex;
-      justify-content: center;
-      padding: 48px 16px;
+      flex-direction: column;
+      align-items: center;
     }
 
-    .card {
-      background: #fff;
-      border-radius: 12px;
-      box-shadow: 0 2px 12px rgba(0,0,0,.08);
-      padding: 32px;
+    header {
       width: 100%;
-      max-width: 680px;
+      background: #fff;
+      border-bottom: 1px solid #e5e5e5;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
-    h1 { font-size: 1.3rem; font-weight: 600; margin-bottom: 24px; color: #111; }
+    header h1 {
+      font-size: 17px;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    header span {
+      font-size: 12px;
+      background: #f0f0f0;
+      color: #666;
+      border-radius: 4px;
+      padding: 2px 7px;
+    }
+
+    #status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ccc;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    #status-dot.ok   { background: #22c55e; }
+    #status-dot.err  { background: #ef4444; }
+
+    main {
+      width: 100%;
+      max-width: 760px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 24px 16px 0;
+      gap: 0;
+    }
+
+    #chat {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      overflow-y: auto;
+      padding-bottom: 16px;
+      min-height: 0;
+      max-height: calc(100vh - 220px);
+    }
+
+    .bubble {
+      max-width: 88%;
+      padding: 12px 15px;
+      border-radius: 12px;
+      line-height: 1.6;
+      font-size: 14.5px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .bubble.user {
+      align-self: flex-end;
+      background: #1a1a1a;
+      color: #fff;
+      border-bottom-right-radius: 3px;
+    }
+
+    .bubble.agent {
+      align-self: flex-start;
+      background: #fff;
+      border: 1px solid #e5e5e5;
+      border-bottom-left-radius: 3px;
+    }
+
+    .bubble.error {
+      align-self: flex-start;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #b91c1c;
+      border-bottom-left-radius: 3px;
+    }
+
+    .bubble.thinking {
+      align-self: flex-start;
+      background: #fff;
+      border: 1px solid #e5e5e5;
+      color: #888;
+      border-bottom-left-radius: 3px;
+      font-style: italic;
+    }
+
+    .meta {
+      font-size: 11px;
+      color: #aaa;
+      margin-top: 3px;
+    }
+
+    .bubble.user + .meta { text-align: right; }
+
+    form {
+      display: flex;
+      gap: 8px;
+      padding: 16px 0 24px;
+      position: sticky;
+      bottom: 0;
+      background: #f5f5f5;
+    }
 
     textarea {
-      width: 100%;
-      height: 100px;
-      padding: 12px;
-      border: 1px solid #d1d5db;
-      border-radius: 8px;
-      font-size: 0.95rem;
-      resize: vertical;
+      flex: 1;
+      resize: none;
+      border: 1px solid #d4d4d4;
+      border-radius: 10px;
+      padding: 11px 14px;
+      font-size: 14.5px;
+      font-family: inherit;
+      background: #fff;
       outline: none;
-      transition: border-color .2s;
+      min-height: 46px;
+      max-height: 140px;
+      overflow-y: auto;
+      line-height: 1.5;
     }
-    textarea:focus { border-color: #6366f1; }
+    textarea:focus { border-color: #888; }
 
-    button {
-      margin-top: 12px;
-      padding: 10px 24px;
-      background: #6366f1;
+    button[type=submit] {
+      align-self: flex-end;
+      background: #1a1a1a;
       color: #fff;
       border: none;
-      border-radius: 8px;
-      font-size: 0.95rem;
+      border-radius: 10px;
+      padding: 11px 18px;
+      font-size: 14px;
+      font-weight: 500;
       cursor: pointer;
-      transition: background .2s;
+      white-space: nowrap;
+      height: 46px;
     }
-    button:hover:not(:disabled) { background: #4f46e5; }
-    button:disabled { opacity: .55; cursor: default; }
+    button[type=submit]:disabled { background: #aaa; cursor: not-allowed; }
+    button[type=submit]:hover:not(:disabled) { background: #333; }
 
-    #result {
-      margin-top: 24px;
-      padding: 16px;
-      background: #f9fafb;
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      font-size: 0.95rem;
-      line-height: 1.6;
-      white-space: pre-wrap;
-      min-height: 60px;
-      color: #374151;
-      display: none;
+    #examples {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
     }
-    #result.error { color: #dc2626; background: #fef2f2; border-color: #fecaca; }
-    #result.loading { color: #6b7280; font-style: italic; }
+
+    .chip {
+      background: #fff;
+      border: 1px solid #d4d4d4;
+      border-radius: 20px;
+      padding: 5px 12px;
+      font-size: 12.5px;
+      cursor: pointer;
+      color: #444;
+      transition: border-color .15s;
+    }
+    .chip:hover { border-color: #888; color: #1a1a1a; }
+
+    #api-url-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    #api-url-row input {
+      flex: 1;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      color: #555;
+      background: #fafafa;
+      outline: none;
+    }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>HR Assistant</h1>
 
-    <textarea id="query" placeholder="Ask anything about employees, payroll, attendance…"></textarea>
-    <button id="submit">Ask</button>
+<header>
+  <h1>HR Assistant</h1>
+  <span>local</span>
+  <div id="status-dot" title="API health"></div>
+</header>
 
-    <div id="result"></div>
+<main>
+  <div id="api-url-row">
+    <label for="api-url">API</label>
+    <input id="api-url" type="text" value="http://localhost:8000" />
   </div>
 
-  <script>
-    const API = 'http://localhost:8000/query';
-    const btn = document.getElementById('submit');
-    const box = document.getElementById('result');
+  <div id="examples">
+    <button class="chip" onclick="fill('Who has been on bench for 2+ months?')">Bench &gt; 2 months</button>
+    <button class="chip" onclick="fill('Who hasn\'t filled their logs this week?')">Missing logs</button>
+    <button class="chip" onclick="fill('Show resignations by department')">Resignations by dept</button>
+    <button class="chip" onclick="fill('How many new joiners did we have in 2025?')">2025 joiners</button>
+    <button class="chip" onclick="fill('Which team has the most attrition this year?')">Most attrition</button>
+    <button class="chip" onclick="fill('Who is available for a Django project starting May?')">Django availability</button>
+  </div>
 
-    document.getElementById('submit').addEventListener('click', async () => {
-      const q = document.getElementById('query').value.trim();
-      if (!q) return;
+  <div id="chat"></div>
 
-      btn.disabled = true;
-      box.className = 'loading';
-      box.style.display = 'block';
-      box.textContent = 'Thinking…';
+  <form id="query-form">
+    <textarea
+      id="input"
+      placeholder="Ask an HR question…"
+      rows="1"
+      autofocus
+    ></textarea>
+    <button type="submit" id="send-btn">Ask</button>
+  </form>
+</main>
 
-      try {
-        const res = await fetch(API, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: q }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-        box.className = '';
-        box.textContent = data.answer;
-      } catch (err) {
-        box.className = 'error';
-        box.textContent = `Error: ${err.message}`;
-      } finally {
-        btn.disabled = false;
+<script>
+  const chat    = document.getElementById('chat');
+  const form    = document.getElementById('query-form');
+  const input   = document.getElementById('input');
+  const sendBtn = document.getElementById('send-btn');
+  const dot     = document.getElementById('status-dot');
+  const apiUrl  = document.getElementById('api-url');
+
+  // Auto-grow textarea
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+  });
+
+  // Submit on Enter (Shift+Enter = newline)
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+  });
+
+  function fill(text) {
+    input.value = text;
+    input.style.height = 'auto';
+    input.dispatchEvent(new Event('input'));
+    input.focus();
+  }
+
+  function addBubble(text, cls, meta) {
+    const wrap = document.createElement('div');
+    const b = document.createElement('div');
+    b.className = 'bubble ' + cls;
+    b.textContent = text;
+    wrap.appendChild(b);
+    if (meta) {
+      const m = document.createElement('div');
+      m.className = 'meta';
+      m.textContent = meta;
+      wrap.appendChild(m);
+    }
+    chat.appendChild(wrap);
+    chat.scrollTop = chat.scrollHeight;
+    return b;
+  }
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (!q) return;
+
+    addBubble(q, 'user');
+    input.value = '';
+    input.style.height = 'auto';
+    sendBtn.disabled = true;
+
+    const thinking = addBubble('Thinking…', 'thinking');
+
+    const base = apiUrl.value.replace(/\/$/, '');
+    const t0 = Date.now();
+
+    try {
+      const res = await fetch(base + '/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q }),
+      });
+
+      const data = await res.json();
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1) + 's';
+
+      thinking.remove();
+
+      if (!res.ok) {
+        addBubble(data.detail || 'Error ' + res.status, 'error');
+      } else {
+        addBubble(data.answer, 'agent', elapsed);
       }
-    });
+    } catch (err) {
+      thinking.remove();
+      addBubble('Could not reach the API. Is the server running?\n' + err.message, 'error');
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  });
 
-    document.getElementById('query').addEventListener('keydown', e => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) btn.click();
-    });
-  </script>
+  // Health check on load and whenever the API URL changes
+  async function checkHealth() {
+    const base = apiUrl.value.replace(/\/$/, '');
+    try {
+      const r = await fetch(base + '/health');
+      dot.className = r.ok ? 'ok' : 'err';
+      dot.title = r.ok ? 'API connected' : 'API returned ' + r.status;
+    } catch {
+      dot.className = 'err';
+      dot.title = 'API unreachable';
+    }
+  }
+
+  apiUrl.addEventListener('change', checkHealth);
+  checkHealth();
+</script>
 </body>
 </html>
