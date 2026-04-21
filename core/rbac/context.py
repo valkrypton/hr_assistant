@@ -116,16 +116,18 @@ class RBACContext:
             if self.team_id:
                 return (
                     base
-                    + f"DATA SCOPE: you ONLY have access to team_id = {self.team_id}.\n"
+                    + f"DATA SCOPE: you ONLY have access to team.id = {self.team_id} "
+                    f"(via person_team.nsubteam_id = {self.team_id}).\n"
                     f"- Every query MUST include a JOIN to person_team WHERE nsubteam_id = {self.team_id} "
                     f"AND end_date IS NULL AND is_active = true.\n"
                     f"- If the question asks about any other team or employees outside your team, "
                     f"respond ONLY with: \"You don't have access to data outside your team.\"\n"
-                    f"- Never query or return employee data for any other team_id.\n"
+                    f"- Never query or return employee data for any other team "
+                    f"(person_team.nsubteam_id / team.id).\n"
                 )
             return base + "DATA SCOPE: no team assigned — return no employee data.\n"
 
-        return base + "DATA SCOPE: full company-wide access.\n"
+        return base + "DATA SCOPE: unknown or unsupported role — return no employee data.\n"
 
     def can_see_employee(self, dept_id: Optional[int], team_id: Optional[int]) -> bool:
         """
@@ -143,7 +145,8 @@ class RBACContext:
     def strip_forbidden(self, text: str) -> str:
         """
         Best-effort scan of the agent's text output for forbidden column names.
-        Returns a sanitised version with a warning prepended if anything was found.
+        Returns the original text unchanged when nothing forbidden is found,
+        otherwise returns a sanitised version with matching content redacted.
 
         This is a defence-in-depth measure — the primary enforcement is via the
         prompt.  This catches cases where the LLM ignores the instruction.

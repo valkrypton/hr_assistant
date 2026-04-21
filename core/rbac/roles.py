@@ -8,7 +8,7 @@ class Role(str, Enum):
     Scope rules:
       CTO_CEO       — full company-wide access
       HR_MANAGER    — company-wide (employee details, leaves, attrition, utilisation)
-      DEPT_HEAD     — own department; cross-department read for roster/skills/availability
+      DEPT_HEAD     — own department only
       TEAM_LEAD     — own team only (member names, skills, availability, projects)
     """
     CTO_CEO = "cto_ceo"

@@ -30,9 +30,13 @@ class Settings:
     QWEN_MODEL: str = os.getenv("QWEN_MODEL", "qwen-max")
     QWEN_BASE_URL: str = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 
-    LIBRECHAT_API_KEY = os.getenv("LIBRECHAT_API_KEY", "")
-    LIBRECHAT_MODEL = os.getenv("LIBRECHAT_MODEL", "xai/grok-4-0709")
-    LIBRECHAT_BASE_URL = os.getenv("LIBRECHAT_BASE_URL", "https://litellm.arbisoft.com")
+    LIBRECHAT_API_KEY: str = os.getenv("LIBRECHAT_API_KEY", "")
+    LIBRECHAT_MODEL: str = os.getenv("LIBRECHAT_MODEL", "xai/grok-4-0709")
+    LIBRECHAT_BASE_URL: str = os.getenv("LIBRECHAT_BASE_URL", "https://litellm.arbisoft.com")
+
+    # Trusted proxy/load-balancer hosts for X-Forwarded-* headers.
+    # Restrict to actual proxy addresses in production.
+    TRUSTED_PROXY_HOSTS: str = os.getenv("TRUSTED_PROXY_HOSTS", "127.0.0.1")
 
     # ERP database — read-only; used exclusively by the SQL agent.
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./data/company.db")

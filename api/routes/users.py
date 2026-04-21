@@ -1,12 +1,16 @@
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from api.deps import app_engine
 from core.rbac.models import HRUser
 from core.rbac.roles import Role
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/users")
 
@@ -62,9 +66,10 @@ def register_user(body: UserCreate):
         try:
             session.commit()
             session.refresh(user)
-        except Exception as exc:
+        except IntegrityError as exc:
             session.rollback()
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            logger.warning("User registration conflict: %s", exc)
+            raise HTTPException(status_code=409, detail="A user with this employee ID or Slack user ID already exists.") from exc
         return UserResponse(
             id=user.id,
             employee_id=user.employee_id,

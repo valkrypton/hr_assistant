@@ -56,11 +56,14 @@ def client(test_db_url, mock_query):
     - SQLAdmin admin warmup skipped
     """
     from core.config import settings
+    from api.deps import app_engine, erp_engine
 
     orig_app = settings.APP_DATABASE_URL
     orig_erp = settings.DATABASE_URL
     settings.APP_DATABASE_URL = test_db_url
     settings.DATABASE_URL = test_db_url
+    app_engine.cache_clear()
+    erp_engine.cache_clear()
 
     # Create tables in test DB before app starts.
     import sqlalchemy
@@ -77,6 +80,8 @@ def client(test_db_url, mock_query):
 
     settings.APP_DATABASE_URL = orig_app
     settings.DATABASE_URL = orig_erp
+    app_engine.cache_clear()
+    erp_engine.cache_clear()
 
 
 _user_counter = 0

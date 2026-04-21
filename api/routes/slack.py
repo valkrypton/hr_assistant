@@ -17,8 +17,8 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
     Receive Slack Events API payloads.
 
     Protocol:
-    1. Handle url_verification challenge before signature check (bootstrapping).
-    2. Verify X-Slack-Signature — reject unsigned requests with 403.
+    1. Verify X-Slack-Signature for ALL requests — reject unsigned with 403.
+    2. Handle url_verification challenge (Slack signs these too).
     3. Ack with 200 immediately — Slack requires a response within 3 seconds.
     4. Dispatch the actual query to a background task.
 
@@ -28,16 +28,13 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
 
     raw_body = await request.body()
 
-    # Step 1: URL verification challenge — respond before signature check.
+    # Step 1: Parse payload (needed for url_verification challenge extraction).
     try:
         payload = json.loads(raw_body)
     except Exception:
         payload = {}
 
-    if payload.get("type") == "url_verification":
-        return JSONResponse({"challenge": payload.get("challenge", "")})
-
-    # Step 2: Verify signature on all real events.
+    # Step 2: Verify signature for ALL requests — including url_verification.
     timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
     signature = request.headers.get("X-Slack-Signature", "")
 
@@ -50,7 +47,11 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
         logger.warning("Slack signature verification failed — ts=%s", timestamp)
         raise HTTPException(status_code=403, detail="Invalid Slack signature.")
 
-    # Step 3: Dispatch event.
+    # Step 3: Handle url_verification challenge after signature check.
+    if payload.get("type") == "url_verification":
+        return JSONResponse({"challenge": payload.get("challenge", "")})
+
+    # Step 4: Dispatch event.
     if payload.get("type") == "event_callback":
         event = payload.get("event", {})
         etype = event.get("type")

@@ -19,6 +19,7 @@ from api.admin import AuditLogAdmin, HRUserAdmin
 from api.deps import app_engine
 from api.routes import audit, health, query, slack, users
 from core.agent import get_agent
+from core.config import settings
 from core.rbac.models import Base
 
 
@@ -44,7 +45,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.TRUSTED_PROXY_HOSTS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -67,7 +68,19 @@ class AdminCSSMiddleware(BaseHTTPMiddleware):
         ):
             body = b"".join([chunk async for chunk in response.body_iterator])
             body = body.replace(b"</head>", _ADMIN_CSS)
-            return HTMLResponse(content=body.decode(), status_code=response.status_code)
+            modified = HTMLResponse(
+                content=body.decode(),
+                status_code=response.status_code,
+                media_type=response.media_type,
+                background=response.background,
+            )
+            preserved = [
+                (k, v)
+                for k, v in response.raw_headers
+                if k.lower() not in (b"content-length", b"content-type")
+            ]
+            modified.raw_headers = preserved + list(modified.raw_headers)
+            return modified
         return response
 
 

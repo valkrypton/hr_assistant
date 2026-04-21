@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -46,12 +47,21 @@ def get_audit_logs(
     """
     limit = min(limit, 1000)
 
+    def _parse_date(value: str, param: str) -> datetime:
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid date format for {param}: '{value}'. Use ISO-8601 (e.g. 2025-01-01).")
+
+    parsed_from = _parse_date(from_date, "from_date") if from_date else None
+    parsed_to = _parse_date(to_date, "to_date") if to_date else None
+
     with Session(app_engine()) as session:
         q = session.query(AuditLog)
-        if from_date:
-            q = q.filter(AuditLog.created_at >= from_date)
-        if to_date:
-            q = q.filter(AuditLog.created_at <= to_date)
+        if parsed_from:
+            q = q.filter(AuditLog.created_at >= parsed_from)
+        if parsed_to:
+            q = q.filter(AuditLog.created_at <= parsed_to)
         if slack_user_id:
             q = q.filter(AuditLog.slack_user_id == slack_user_id)
         if role:
