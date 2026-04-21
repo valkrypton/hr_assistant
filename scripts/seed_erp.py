@@ -35,7 +35,7 @@ if not DATABASE_URL.startswith("postgresql"):
 
 connect_args: dict = {"connect_timeout": 10}
 if "sslmode" not in DATABASE_URL:
-    connect_args["sslmode"] = "require"
+    connect_args["sslmode"] = "prefer"
 
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
 

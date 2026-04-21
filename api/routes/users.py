@@ -69,7 +69,7 @@ def register_user(body: UserCreate):
         except IntegrityError as exc:
             session.rollback()
             logger.warning("User registration conflict: %s", exc)
-            raise HTTPException(status_code=409, detail="A user with this employee ID or Slack user ID already exists.") from exc
+            raise HTTPException(status_code=409, detail="A user with this Slack user ID already exists.") from exc
         return UserResponse(
             id=user.id,
             employee_id=user.employee_id,

@@ -19,6 +19,7 @@ Forbidden columns (FR-5.8 — never exposed regardless of role):
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
@@ -137,9 +138,9 @@ class RBACContext:
         if self.is_unrestricted:
             return True
         if self.role == Role.DEPT_HEAD:
-            return dept_id == self.department_id
+            return self.department_id is not None and dept_id == self.department_id
         if self.role == Role.TEAM_LEAD:
-            return team_id == self.team_id
+            return self.team_id is not None and team_id == self.team_id
         return False
 
     def strip_forbidden(self, text: str) -> str:
@@ -152,18 +153,19 @@ class RBACContext:
         prompt.  This catches cases where the LLM ignores the instruction.
         """
         lower = text.lower()
-        found = [col for col in FORBIDDEN_COLUMNS if col in lower]
+        # Check with word boundaries to avoid partial matches (e.g. "nic" inside "cnic").
+        found = [
+            col for col in FORBIDDEN_COLUMNS
+            if re.search(rf"\b{re.escape(col)}\b", lower)
+        ]
         if not found:
             return text
 
-        # Replace found tokens with redacted placeholders.
+        # Process longer keys first to avoid partial-overlap redactions.
         sanitised = text
-        for col in found:
-            import re
-            # Match the column name followed by its value (e.g. "salary: 120000").
-            # Stop at comma, semicolon, or newline so we don't consume adjacent fields.
+        for col in sorted(found, key=len, reverse=True):
             sanitised = re.sub(
-                rf"(?i){re.escape(col)}\s*[:\-=]?\s*[^\n,;]+",
+                rf"(?i)\b{re.escape(col)}\b\s*[:\-=]?\s*[^\n,;]+",
                 f"[{col.upper()} REDACTED]",
                 sanitised,
             )

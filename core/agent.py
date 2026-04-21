@@ -170,10 +170,12 @@ def _build_agent(rbac_ctx=None):
     else:
         from core.rbac.roles import Role
         scope_lines = rbac_ctx.scope_prompt().splitlines()
-        # First line is the FORBIDDEN COLUMNS line — already in the base prefix block.
-        # Extract just the DATA SCOPE line(s) for the restricted template.
+        # The base prefix already includes the forbidden-columns rule; drop that line
+        # here to avoid duplication. Retain ALL other scope/enforcement lines so
+        # required JOINs/filters (e.g. nsubteam_id, end_date IS NULL) are not lost.
         scope_description = "\n".join(
-            ln for ln in scope_lines if ln.startswith("DATA SCOPE")
+            ln for ln in scope_lines
+            if ln.strip() and not ln.startswith("FORBIDDEN COLUMNS")
         )
         rbac_prefix = _RESTRICTED_RBAC.format(
             role=rbac_ctx.role.value.upper().replace("_", " "),
