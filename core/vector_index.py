@@ -116,6 +116,17 @@ def build_index() -> "VectorStore":
     ]
 
     embeddings = _get_embeddings()
+
+    # Delete existing collection before rebuild to prevent duplicate accumulation
+    # on repeated nightly runs.
+    import chromadb
+    _client = chromadb.PersistentClient(path=settings.VECTOR_STORE_PATH)
+    try:
+        _client.delete_collection("hr_erp")
+    except Exception:
+        pass
+    del _client
+
     store = Chroma.from_documents(
         documents=lc_docs,
         embedding=embeddings,

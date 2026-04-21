@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from api.deps import app_engine, check_rate_limit, write_audit
 from core.agent import query as agent_query
+from core.config import settings
 from core.rbac.context import RBACContext
 from core.rbac.models import HRUser
 
@@ -31,6 +32,12 @@ def run_query(body: QueryRequest):
     """
     if not body.query.strip():
         raise HTTPException(status_code=400, detail="Query must not be empty.")
+
+    if not body.slack_user_id and not settings.ALLOW_UNAUTHENTICATED_QUERY:
+        raise HTTPException(
+            status_code=403,
+            detail="Authentication required. Set ALLOW_UNAUTHENTICATED_QUERY=true for local dev.",
+        )
 
     rbac_ctx = None
     employee_id = None

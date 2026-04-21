@@ -63,7 +63,7 @@ Read and enforce it before writing any SQL.
 {rbac_prefix}
 
 - DATA SCOPE restrictions apply to every SQL query — add required WHERE/JOIN. No exceptions.
-- Silently enforce scope — never tell the requester that data was withheld.
+- If a request falls outside your DATA SCOPE, respond explicitly: "You don't have access to that data." Do not attempt to query or return out-of-scope data.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 OPERATIONAL RULES:
@@ -191,7 +191,7 @@ def _build_agent(rbac_ctx=None):
     return create_sql_agent(
         llm=llm,
         db=db,
-        verbose=True,
+        verbose=settings.DEBUG,
         prefix=prefix,
         max_iterations=10,
         agent_type="tool-calling",

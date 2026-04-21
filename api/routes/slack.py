@@ -59,7 +59,11 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
         if event.get("bot_id") or event.get("subtype") == "bot_message":
             return JSONResponse({"ok": True})
 
-        if etype in ("app_mention", "message"):
+        is_supported_event = etype == "app_mention" or (
+            etype == "message" and event.get("channel_type") == "im"
+        )
+
+        if is_supported_event:
             slack_user_id = event.get("user")
             text = event.get("text", "").strip()
             channel = event.get("channel", "")

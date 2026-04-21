@@ -5,7 +5,7 @@ load_dotenv()
 
 
 class Settings:
-    # AI Provider: ollama | openai | anthropic | xai | qwen
+    # AI Provider: ollama | openai | anthropic | xai | qwen | librechat
     AI_PROVIDER: str = os.getenv("AI_PROVIDER", "ollama")
 
     # Ollama
@@ -61,6 +61,10 @@ class Settings:
     # Vector index
     VECTOR_STORE_PATH: str = os.getenv("VECTOR_STORE_PATH", "./data/chroma")
     VECTOR_EMBEDDING_MODEL: str = os.getenv("VECTOR_EMBEDDING_MODEL", "nomic-embed-text")
+
+    # Debug — enables verbose agent logging and unauthenticated /query access.
+    DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
+    ALLOW_UNAUTHENTICATED_QUERY: bool = os.getenv("ALLOW_UNAUTHENTICATED_QUERY", "false").lower() == "true"
 
 
 settings = Settings()

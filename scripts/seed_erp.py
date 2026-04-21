@@ -30,7 +30,7 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 if not DATABASE_URL:
     sys.exit("DATABASE_URL not set. Add it to .env or export it.")
-if not DATABASE_URL.startswith("postgresql"):
+if not DATABASE_URL.startswith(("postgresql://", "postgres://")):
     sys.exit("This script requires PostgreSQL. Set DATABASE_URL to a postgres:// or postgresql:// URL.")
 
 connect_args: dict = {"connect_timeout": 10}
