@@ -27,6 +27,28 @@ class Base(DeclarativeBase):
     pass
 
 
+class AdminUser(Base):
+    """
+    Superusers who can access the /users, /audit API routes and /admin panel.
+    Separate from HRUser — HR users query the bot, admin users manage it.
+    Create via: python scripts/create_admin.py <username>
+    """
+    __tablename__ = "hr_admin_users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(64), nullable=False, unique=True, index=True)
+    hashed_password = Column(String(128), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AdminUser id={self.id} username={self.username} active={self.is_active}>"
+
+
 class HRUser(Base):
     __tablename__ = "hr_assistant_users"
     __table_args__ = (

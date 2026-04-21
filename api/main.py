@@ -12,15 +12,44 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from sqladmin import Admin
+from sqladmin.authentication import AuthenticationBackend
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import RedirectResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from api.admin import AuditLogAdmin, HRUserAdmin
 from api.deps import app_engine
 from api.routes import audit, health, query, slack, users
 from core.agent import get_agent
+from core.auth import verify_password
 from core.config import settings
-from core.rbac.models import Base
+from core.rbac.models import AdminUser, Base
+
+
+# ---------------------------------------------------------------------------
+# SQLAdmin authentication backend
+# ---------------------------------------------------------------------------
+
+class AdminAuth(AuthenticationBackend):
+    async def login(self, request: StarletteRequest) -> bool:
+        form = await request.form()
+        username = form.get("username", "")
+        password = form.get("password", "")
+        from sqlalchemy.orm import Session
+        with Session(app_engine()) as session:
+            admin = session.query(AdminUser).filter_by(username=username, is_active=True).first()
+        if admin and verify_password(password, admin.hashed_password):
+            request.session["admin_username"] = username
+            return True
+        return False
+
+    async def logout(self, request: StarletteRequest) -> bool:
+        request.session.clear()
+        return True
+
+    async def authenticate(self, request: StarletteRequest) -> bool:
+        return "admin_username" in request.session
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +120,7 @@ app.add_middleware(AdminCSSMiddleware)
 # SQLAdmin panel  →  http://localhost:8000/admin
 # ---------------------------------------------------------------------------
 
-admin = Admin(app, engine=app_engine())
+admin = Admin(app, engine=app_engine(), authentication_backend=AdminAuth(secret_key=settings.SECRET_KEY))
 admin.add_view(HRUserAdmin)
 admin.add_view(AuditLogAdmin)
 

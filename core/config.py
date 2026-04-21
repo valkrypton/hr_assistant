@@ -62,6 +62,10 @@ class Settings:
     VECTOR_STORE_PATH: str = os.getenv("VECTOR_STORE_PATH", "./data/chroma")
     VECTOR_EMBEDDING_MODEL: str = os.getenv("VECTOR_EMBEDDING_MODEL", "nomic-embed-text")
 
+    # Secret key for signing admin session cookies (SQLAdmin panel).
+    # Use a strong random value in production: openssl rand -hex 32
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production")
+
     # Debug — enables verbose agent logging and unauthenticated /query access.
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
     ALLOW_UNAUTHENTICATED_QUERY: bool = os.getenv("ALLOW_UNAUTHENTICATED_QUERY", "false").lower() == "true"

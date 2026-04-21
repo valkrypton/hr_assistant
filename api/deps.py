@@ -4,15 +4,38 @@ Shared dependencies for the API layer.
 Provides engine factories and the audit-log writer used across multiple routes.
 """
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Optional
 
 import sqlalchemy
-from fastapi import HTTPException
-from functools import lru_cache
+from fastapi import HTTPException, Security
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 
+from core.auth import verify_password
 from core.config import settings
-from core.rbac.models import AuditLog
+from core.rbac.models import AdminUser, AuditLog
+
+_basic_auth = HTTPBasic(auto_error=False)
+
+
+def require_admin(credentials: Optional[HTTPBasicCredentials] = Security(_basic_auth)) -> AdminUser:
+    """FastAPI dependency — HTTP Basic Auth checked against the AdminUser table."""
+    if not credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="Admin authentication required.",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    with Session(app_engine()) as session:
+        admin = session.query(AdminUser).filter_by(username=credentials.username, is_active=True).first()
+    if not admin or not verify_password(credentials.password, admin.hashed_password):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials.",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return admin
 
 
 @lru_cache(maxsize=1)

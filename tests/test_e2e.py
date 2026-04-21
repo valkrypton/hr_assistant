@@ -11,6 +11,8 @@ The APP_DATABASE_URL is overridden to a fresh SQLite file per test session
 so route handlers automatically use the test DB (they call app_engine() at
 request time, which reads settings.APP_DATABASE_URL).
 """
+import base64
+
 import pytest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
@@ -21,6 +23,12 @@ from fastapi.testclient import TestClient
 # ---------------------------------------------------------------------------
 
 MOCK_ANSWER = "Here is the answer to your question based on the available data."
+_ADMIN_CREDS = ("test-admin", "test-password-123")
+_ADMIN_HEADERS = {
+    "Authorization": "Basic " + base64.b64encode(
+        f"{_ADMIN_CREDS[0]}:{_ADMIN_CREDS[1]}".encode()
+    ).decode()
+}
 
 
 @pytest.fixture(scope="module")
@@ -60,16 +68,23 @@ def client(test_db_url, mock_query):
 
     orig_app = settings.APP_DATABASE_URL
     orig_erp = settings.DATABASE_URL
+    orig_allow_unauth = settings.ALLOW_UNAUTHENTICATED_QUERY
     settings.APP_DATABASE_URL = test_db_url
     settings.DATABASE_URL = test_db_url
+    settings.ALLOW_UNAUTHENTICATED_QUERY = True
     app_engine.cache_clear()
     erp_engine.cache_clear()
 
-    # Create tables in test DB before app starts.
+    # Create tables and seed test admin user.
     import sqlalchemy
-    from core.rbac.models import Base
+    from core.auth import hash_password
+    from core.rbac.models import AdminUser, Base
+    from sqlalchemy.orm import Session as _Session
     engine = sqlalchemy.create_engine(test_db_url)
     Base.metadata.create_all(engine)
+    with _Session(engine) as s:
+        s.add(AdminUser(username=_ADMIN_CREDS[0], hashed_password=hash_password(_ADMIN_CREDS[1])))
+        s.commit()
 
     with patch("core.agent.get_agent"):  # skip LLM warmup in lifespan
         from importlib import reload
@@ -80,6 +95,7 @@ def client(test_db_url, mock_query):
 
     settings.APP_DATABASE_URL = orig_app
     settings.DATABASE_URL = orig_erp
+    settings.ALLOW_UNAUTHENTICATED_QUERY = orig_allow_unauth
     app_engine.cache_clear()
     erp_engine.cache_clear()
 
@@ -96,11 +112,11 @@ def registered_user(client):
         "employee_id": 900 + _user_counter,
         "role": "cto_ceo",
         "slack_user_id": slack_id,
-    })
+    }, headers=_ADMIN_HEADERS)
     assert r.status_code == 201
     user_id = r.json()["id"]
     yield slack_id
-    client.delete(f"/users/{user_id}")
+    client.delete(f"/users/{user_id}", headers=_ADMIN_HEADERS)
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +198,7 @@ class TestQueryAuthenticated:
             "slack_user_id": registered_user,
         })
         assert r.status_code == 200
-        logs = client.get(f"/audit?slack_user_id={registered_user}&limit=5").json()
+        logs = client.get(f"/audit?slack_user_id={registered_user}&limit=5", headers=_ADMIN_HEADERS).json()
         questions = [l["question"] for l in logs]
         assert "Audit test query" in questions
         entry = next(l for l in logs if l["question"] == "Audit test query")
@@ -196,7 +212,7 @@ class TestQueryAuthenticated:
                 "slack_user_id": registered_user,
             })
         assert r.status_code == 500
-        logs = client.get(f"/audit?slack_user_id={registered_user}&limit=10").json()
+        logs = client.get(f"/audit?slack_user_id={registered_user}&limit=10", headers=_ADMIN_HEADERS).json()
         errors = [l for l in logs if l["question"] == "Error test query"]
         assert len(errors) > 0
         assert errors[0]["error"] is not None
@@ -250,7 +266,7 @@ class TestRateLimit:
 
 class TestUserAdmin:
     def test_list_users(self, client):
-        r = client.get("/users")
+        r = client.get("/users", headers=_ADMIN_HEADERS)
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
@@ -259,36 +275,36 @@ class TestUserAdmin:
             "employee_id": 777,
             "role": "hr_manager",
             "slack_user_id": "U_ADMIN_TEST",
-        })
+        }, headers=_ADMIN_HEADERS)
         assert r.status_code == 201
         data = r.json()
         assert data["role"] == "hr_manager"
         assert data["slack_user_id"] == "U_ADMIN_TEST"
         # cleanup
-        client.delete(f"/users/{data['id']}")
+        client.delete(f"/users/{data['id']}", headers=_ADMIN_HEADERS)
 
     def test_duplicate_slack_id_rejected(self, client):
         payload = {"employee_id": 1, "role": "cto_ceo", "slack_user_id": "U_DUP_TEST"}
-        r1 = client.post("/users", json=payload)
+        r1 = client.post("/users", json=payload, headers=_ADMIN_HEADERS)
         assert r1.status_code == 201
-        r2 = client.post("/users", json=payload)
+        r2 = client.post("/users", json=payload, headers=_ADMIN_HEADERS)
         assert r2.status_code == 409
-        client.delete(f"/users/{r1.json()['id']}")
+        client.delete(f"/users/{r1.json()['id']}", headers=_ADMIN_HEADERS)
 
     def test_deregister_user(self, client):
         r = client.post("/users", json={
             "employee_id": 555,
             "role": "team_lead",
             "slack_user_id": "U_DEL_TEST",
-        })
+        }, headers=_ADMIN_HEADERS)
         assert r.status_code == 201
         user_id = r.json()["id"]
-        assert client.delete(f"/users/{user_id}").status_code == 204
-        users = client.get("/users").json()
+        assert client.delete(f"/users/{user_id}", headers=_ADMIN_HEADERS).status_code == 204
+        users = client.get("/users", headers=_ADMIN_HEADERS).json()
         assert all(u["id"] != user_id for u in users)
 
     def test_deregister_nonexistent_user(self, client):
-        r = client.delete("/users/99999")
+        r = client.delete("/users/99999", headers=_ADMIN_HEADERS)
         assert r.status_code == 404
 
 
@@ -298,7 +314,7 @@ class TestUserAdmin:
 
 class TestAuditLog:
     def test_audit_returns_list(self, client):
-        r = client.get("/audit")
+        r = client.get("/audit", headers=_ADMIN_HEADERS)
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
@@ -307,7 +323,7 @@ class TestAuditLog:
             "query": "filter test",
             "slack_user_id": registered_user,
         })
-        r = client.get(f"/audit?slack_user_id={registered_user}")
+        r = client.get(f"/audit?slack_user_id={registered_user}", headers=_ADMIN_HEADERS)
         assert r.status_code == 200
         assert all(e["slack_user_id"] == registered_user for e in r.json())
 
@@ -317,7 +333,7 @@ class TestAuditLog:
                 "query": f"limit test {i}",
                 "slack_user_id": registered_user,
             })
-        r = client.get("/audit?limit=2")
+        r = client.get("/audit?limit=2", headers=_ADMIN_HEADERS)
         assert len(r.json()) <= 2
 
     def test_audit_entry_has_latency_fields(self, client, registered_user):
@@ -325,7 +341,7 @@ class TestAuditLog:
             "query": "latency check",
             "slack_user_id": registered_user,
         })
-        logs = client.get(f"/audit?slack_user_id={registered_user}&limit=5").json()
+        logs = client.get(f"/audit?slack_user_id={registered_user}&limit=5", headers=_ADMIN_HEADERS).json()
         entry = next((l for l in logs if l["question"] == "latency check"), None)
         assert entry is not None
         assert entry["total_ms"] == 210
