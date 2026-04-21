@@ -15,7 +15,7 @@ from sqladmin import Admin
 from sqladmin.authentication import AuthenticationBackend
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
-from starlette.responses import RedirectResponse
+from starlette.concurrency import run_in_threadpool
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from api.admin import AuditLogAdmin, HRUserAdmin
@@ -36,9 +36,13 @@ class AdminAuth(AuthenticationBackend):
         form = await request.form()
         username = form.get("username", "")
         password = form.get("password", "")
-        from sqlalchemy.orm import Session
-        with Session(app_engine()) as session:
-            admin = session.query(AdminUser).filter_by(username=username, is_active=True).first()
+
+        def _lookup():
+            from sqlalchemy.orm import Session
+            with Session(app_engine()) as session:
+                return session.query(AdminUser).filter_by(username=username, is_active=True).first()
+
+        admin = await run_in_threadpool(_lookup)
         if admin and verify_password(password, admin.hashed_password):
             request.session["admin_username"] = username
             return True

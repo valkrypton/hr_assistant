@@ -1,4 +1,5 @@
 import os
+import secrets
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -63,8 +64,9 @@ class Settings:
     VECTOR_EMBEDDING_MODEL: str = os.getenv("VECTOR_EMBEDDING_MODEL", "nomic-embed-text")
 
     # Secret key for signing admin session cookies (SQLAdmin panel).
-    # Use a strong random value in production: openssl rand -hex 32
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production")
+    # Set SECRET_KEY in the environment for production; openssl rand -hex 32
+    # When unset, a random key is generated — sessions won't survive restarts.
+    SECRET_KEY: str = os.getenv("SECRET_KEY") or secrets.token_hex(32)
 
     # Debug — enables verbose agent logging and unauthenticated /query access.
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"

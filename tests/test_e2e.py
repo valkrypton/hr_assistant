@@ -75,29 +75,30 @@ def client(test_db_url, mock_query):
     app_engine.cache_clear()
     erp_engine.cache_clear()
 
-    # Create tables and seed test admin user.
-    import sqlalchemy
-    from core.auth import hash_password
-    from core.rbac.models import AdminUser, Base
-    from sqlalchemy.orm import Session as _Session
-    engine = sqlalchemy.create_engine(test_db_url)
-    Base.metadata.create_all(engine)
-    with _Session(engine) as s:
-        s.add(AdminUser(username=_ADMIN_CREDS[0], hashed_password=hash_password(_ADMIN_CREDS[1])))
-        s.commit()
+    try:
+        # Create tables and seed test admin user.
+        import sqlalchemy
+        from core.auth import hash_password
+        from core.rbac.models import AdminUser, Base
+        from sqlalchemy.orm import Session as _Session
+        engine = sqlalchemy.create_engine(test_db_url)
+        Base.metadata.create_all(engine)
+        with _Session(engine) as s:
+            s.add(AdminUser(username=_ADMIN_CREDS[0], hashed_password=hash_password(_ADMIN_CREDS[1])))
+            s.commit()
 
-    with patch("core.agent.get_agent"):  # skip LLM warmup in lifespan
-        from importlib import reload
-        import api.main as main_mod
-        reload(main_mod)                # pick up patched settings
-        with TestClient(main_mod.app, raise_server_exceptions=False) as c:
-            yield c
-
-    settings.APP_DATABASE_URL = orig_app
-    settings.DATABASE_URL = orig_erp
-    settings.ALLOW_UNAUTHENTICATED_QUERY = orig_allow_unauth
-    app_engine.cache_clear()
-    erp_engine.cache_clear()
+        with patch("core.agent.get_agent"):  # skip LLM warmup in lifespan
+            from importlib import reload
+            import api.main as main_mod
+            reload(main_mod)                # pick up patched settings
+            with TestClient(main_mod.app, raise_server_exceptions=False) as c:
+                yield c
+    finally:
+        settings.APP_DATABASE_URL = orig_app
+        settings.DATABASE_URL = orig_erp
+        settings.ALLOW_UNAUTHENTICATED_QUERY = orig_allow_unauth
+        app_engine.cache_clear()
+        erp_engine.cache_clear()
 
 
 _user_counter = 0

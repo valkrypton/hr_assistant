@@ -12,11 +12,16 @@ from fastapi import HTTPException, Security
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 
-from core.auth import verify_password
+from core.auth import hash_password, verify_password
 from core.config import settings
 from core.rbac.models import AdminUser, AuditLog
 
 _basic_auth = HTTPBasic(auto_error=False)
+
+
+@lru_cache(maxsize=1)
+def _dummy_hash() -> str:
+    return hash_password("timing-guard-placeholder")
 
 
 def require_admin(credentials: Optional[HTTPBasicCredentials] = Security(_basic_auth)) -> AdminUser:
@@ -29,7 +34,10 @@ def require_admin(credentials: Optional[HTTPBasicCredentials] = Security(_basic_
         )
     with Session(app_engine()) as session:
         admin = session.query(AdminUser).filter_by(username=credentials.username, is_active=True).first()
-    if not admin or not verify_password(credentials.password, admin.hashed_password):
+    # Always run verify_password (even for unknown users) to prevent timing-based username enumeration.
+    candidate_hash = admin.hashed_password if admin else _dummy_hash()
+    password_ok = verify_password(credentials.password, candidate_hash)
+    if not admin or not password_ok:
         raise HTTPException(
             status_code=401,
             detail="Invalid credentials.",
