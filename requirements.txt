@@ -29,5 +29,8 @@ sqladmin
 slack_sdk>=3.0
 certifi
 
+# SQL rewriting for RBAC scope enforcement
+sqlglot>=20.0,<31
+
 # Testing
 pytest
