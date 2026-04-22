@@ -22,8 +22,13 @@ import sqlglot.expressions as exp
 if TYPE_CHECKING:
     from core.rbac.context import RBACContext
 
+_BLOCKED_NODE_TYPES = (
+    exp.Insert, exp.Update, exp.Delete,
+    exp.Create, exp.Drop, exp.Alter, exp.TruncateTable,
+)
 
-def rewrite_sql(sql: str, rbac_ctx: "RBACContext") -> str:
+
+def rewrite_sql(sql: str, rbac_ctx: Optional["RBACContext"]) -> str:
     """
     Parse sql, reject non-SELECT statements, then inject scope predicates
     into every SELECT node that references the person table.
@@ -52,6 +57,13 @@ def rewrite_sql(sql: str, rbac_ctx: "RBACContext") -> str:
             raise ValueError(
                 f"Non-SELECT statement blocked by scope guard: {type(stmt).__name__}"
             )
+        # CTEs can embed DML (e.g. WITH x AS (DELETE ... RETURNING ...) SELECT ...).
+        # sqlglot parses these as exp.With, passing the isinstance check above, so
+        # we must also walk the tree and reject any DML/DDL node found anywhere.
+        for bad in stmt.find_all(*_BLOCKED_NODE_TYPES):
+            raise ValueError(
+                f"Non-SELECT statement blocked by scope guard: {type(bad).__name__}"
+            )
         if restricted:
             _inject_scope_into_tree(stmt, rbac_ctx)
         rewritten.append(stmt.sql(dialect="postgres"))
@@ -74,18 +86,22 @@ def _inject_scope_into_tree(tree: exp.Expression, rbac_ctx: "RBACContext") -> No
 
 
 def _person_alias(select: exp.Select) -> Optional[str]:
-    """Return the alias (or bare name) used for the person table in this SELECT."""
-    # sqlglot stores the FROM clause under "from_" (trailing underscore avoids
-    # shadowing the Python built-in).
+    """Return the alias (or bare name) used for the person table in this SELECT.
+
+    Only inspects the immediate FROM/JOIN table references — not descendants.
+    Using find_all() would recurse into subqueries and detect person tables that
+    belong to an inner scope, causing the outer WHERE injection to reference an
+    alias that doesn't exist at that level.
+    """
     from_clause = select.args.get("from_")
     if from_clause:
-        for table in from_clause.find_all(exp.Table):
-            if table.name.lower() == "person":
-                return table.alias_or_name
+        table = from_clause.this
+        if isinstance(table, exp.Table) and table.name.lower() == "person":
+            return table.alias_or_name
     for join in select.args.get("joins", []) or []:
-        for table in join.find_all(exp.Table):
-            if table.name.lower() == "person":
-                return table.alias_or_name
+        table = join.this
+        if isinstance(table, exp.Table) and table.name.lower() == "person":
+            return table.alias_or_name
     return None
 
 
@@ -106,7 +122,7 @@ def _scope_sql(rbac_ctx: "RBACContext", person_alias: str) -> Optional[str]:
             f"{person_alias}.id IN ("
             f"SELECT person_id FROM person_team "
             f"WHERE nsubteam_id = {team_id} "
-            f"AND end_date IS NULL AND is_active = 1"
+            f"AND end_date IS NULL AND is_active = true"
             f")"
         )
 
