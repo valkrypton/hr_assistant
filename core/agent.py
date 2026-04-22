@@ -154,6 +154,12 @@ def _build_agent(rbac_ctx=None):
     for the shared unauthenticated agent and for superuser access).  When a
     context is provided, the role and scope are embedded in the prefix so the
     LLM treats them as immutable system rules rather than advisory hints.
+
+    db.run is always wrapped to pass every SQL statement through
+    sql_guard.rewrite_sql before execution.  This blocks non-SELECT
+    statements for all roles (including CTO/CEO and unauthenticated) and
+    additionally injects scope predicates for restricted roles, making
+    both protections immune to prompt injection.
     """
     llm = get_llm()
     included = _get_included_tables()
@@ -162,6 +168,15 @@ def _build_agent(rbac_ctx=None):
         include_tables=included,
         sample_rows_in_table_info=0,
     )
+
+    from core.rbac.sql_guard import rewrite_sql as _rewrite
+    _original_run = db.run
+
+    def _scoped_run(command, fetch="all", **kwargs):
+        command = _rewrite(command, rbac_ctx)
+        return _original_run(command, fetch=fetch, **kwargs)
+
+    db.run = _scoped_run
 
     hr_records_note = "" if _check_hr_records_available(db) else _HR_RECORDS_NOTE
 
