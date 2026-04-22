@@ -65,7 +65,8 @@ class Settings:
 
     # Secret key for signing admin session cookies (SQLAdmin panel).
     # Set SECRET_KEY in the environment for production; openssl rand -hex 32
-    # When unset, a random key is generated — sessions won't survive restarts.
+    # When unset, a random key is generated — sessions won't survive restarts
+    # or multi-worker deploys.
     SECRET_KEY: str = os.getenv("SECRET_KEY") or secrets.token_hex(32)
 
     # Debug — enables verbose agent logging and unauthenticated /query access.
@@ -74,3 +75,19 @@ class Settings:
 
 
 settings = Settings()
+
+_WEAK_SECRET_PLACEHOLDERS = {"change-me-in-production", "changeme", "secret"}
+
+if not settings.DEBUG:
+    _raw_secret_key = os.getenv("SECRET_KEY", "")
+    if not _raw_secret_key:
+        raise RuntimeError(
+            "SECRET_KEY is not set. Each worker process will use a different "
+            "random key, breaking admin sessions across restarts or workers. "
+            "Run: export SECRET_KEY=$(openssl rand -hex 32)"
+        )
+    if _raw_secret_key in _WEAK_SECRET_PLACEHOLDERS:
+        raise RuntimeError(
+            "SECRET_KEY uses a known-weak placeholder value. "
+            "Run: export SECRET_KEY=$(openssl rand -hex 32)"
+        )

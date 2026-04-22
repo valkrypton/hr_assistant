@@ -262,6 +262,33 @@ class TestRateLimit:
 
 
 # ---------------------------------------------------------------------------
+# Admin authentication — unauthenticated requests must be rejected
+# ---------------------------------------------------------------------------
+
+class TestAdminAuth:
+    def test_list_users_without_auth_returns_401(self, client):
+        assert client.get("/users").status_code == 401
+
+    def test_post_users_without_auth_returns_401(self, client):
+        assert client.post("/users", json={
+            "employee_id": 1, "role": "cto_ceo", "slack_user_id": "U_NOAUTH",
+        }).status_code == 401
+
+    def test_delete_user_without_auth_returns_401(self, client):
+        assert client.delete("/users/1").status_code == 401
+
+    def test_audit_without_auth_returns_401(self, client):
+        assert client.get("/audit").status_code == 401
+
+    def test_wrong_password_returns_401(self, client):
+        import base64
+        bad_headers = {
+            "Authorization": "Basic " + base64.b64encode(b"test-admin:wrong-password").decode()
+        }
+        assert client.get("/users", headers=bad_headers).status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # User admin endpoints
 # ---------------------------------------------------------------------------
 
