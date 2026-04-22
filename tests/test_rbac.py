@@ -270,7 +270,13 @@ class TestAgentPrefixRendering:
                 scope_description=scope_description,
             )
 
-        prefix = _BASE_PREFIX.format(rbac_prefix=rbac_prefix, hr_records_note="")
+        from core.agent import _forbidden_columns_str
+        prefix = _BASE_PREFIX.format(
+            forbidden_columns=_forbidden_columns_str(),
+            rbac_prefix=rbac_prefix,
+            hr_records_note="",
+        )
         assert len(prefix) > 100
-        assert "FORBIDDEN" in prefix
+        assert "PRIVACY" in prefix
+        assert "salary" in prefix
         assert "SELECT" in prefix

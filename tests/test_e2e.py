@@ -60,28 +60,32 @@ def client(test_db_url, mock_query):
 
     orig_app = settings.APP_DATABASE_URL
     orig_erp = settings.DATABASE_URL
+    orig_allow_unauth = settings.ALLOW_UNAUTHENTICATED_QUERY
     settings.APP_DATABASE_URL = test_db_url
     settings.DATABASE_URL = test_db_url
+    settings.ALLOW_UNAUTHENTICATED_QUERY = True
     app_engine.cache_clear()
     erp_engine.cache_clear()
 
-    # Create tables in test DB before app starts.
-    import sqlalchemy
-    from core.rbac.models import Base
-    engine = sqlalchemy.create_engine(test_db_url)
-    Base.metadata.create_all(engine)
+    try:
+        # Create tables in test DB before app starts.
+        import sqlalchemy
+        from core.rbac.models import Base
+        engine = sqlalchemy.create_engine(test_db_url)
+        Base.metadata.create_all(engine)
 
-    with patch("core.agent.get_agent"):  # skip LLM warmup in lifespan
-        from importlib import reload
-        import api.main as main_mod
-        reload(main_mod)                # pick up patched settings
-        with TestClient(main_mod.app, raise_server_exceptions=False) as c:
-            yield c
-
-    settings.APP_DATABASE_URL = orig_app
-    settings.DATABASE_URL = orig_erp
-    app_engine.cache_clear()
-    erp_engine.cache_clear()
+        with patch("core.agent.get_agent"):  # skip LLM warmup in lifespan
+            from importlib import reload
+            import api.main as main_mod
+            reload(main_mod)                # pick up patched settings
+            with TestClient(main_mod.app, raise_server_exceptions=False) as c:
+                yield c
+    finally:
+        settings.APP_DATABASE_URL = orig_app
+        settings.DATABASE_URL = orig_erp
+        settings.ALLOW_UNAUTHENTICATED_QUERY = orig_allow_unauth
+        app_engine.cache_clear()
+        erp_engine.cache_clear()
 
 
 _user_counter = 0
