@@ -1,14 +1,14 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from api.deps import app_engine
+from api.deps import app_engine, require_admin
 from core.rbac.models import AuditLog
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 class AuditLogResponse(BaseModel):

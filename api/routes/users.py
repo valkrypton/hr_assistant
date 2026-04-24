@@ -1,18 +1,18 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from api.deps import app_engine
+from api.deps import app_engine, require_admin
 from core.rbac.models import HRUser
 from core.rbac.roles import Role
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/users")
+router = APIRouter(prefix="/users", dependencies=[Depends(require_admin)])
 
 
 class UserCreate(BaseModel):

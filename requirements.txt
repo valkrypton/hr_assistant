@@ -29,5 +29,8 @@ sqladmin
 slack_sdk>=3.0
 certifi
 
+# Admin authentication
+bcrypt>=4.0
+
 # Testing
 pytest
