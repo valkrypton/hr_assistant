@@ -9,6 +9,7 @@ These tests cover:
   - strip_forbidden() redaction (defence-in-depth)
   - RBACContext.for_user() factory
   - Agent prefix templates render without error
+  - sql_guard.rewrite_sql() DB-layer scope enforcement
 
 No database or LLM is involved — all pure unit tests.
 """
@@ -278,4 +279,267 @@ class TestAgentPrefixRendering:
         )
         assert len(prefix) > 100
         assert "PRIVACY" in prefix
+        assert "salary" in prefix           # at least one forbidden column rendered
         assert "SELECT" in prefix
+
+
+# ---------------------------------------------------------------------------
+# sql_guard.rewrite_sql() — DB-layer scope enforcement
+# ---------------------------------------------------------------------------
+
+class TestSQLGuard:
+    """
+    Verify that rewrite_sql enforces scope at the SQL layer regardless of
+    what the LLM was told in the prompt.  No database connection needed.
+    """
+
+    def setup_method(self):
+        from core.rbac.sql_guard import rewrite_sql
+        self.rewrite = rewrite_sql
+
+    # --- unrestricted roles: no scope injection, SELECT allowed ---
+
+    def test_unrestricted_no_scope_injected(self):
+        ctx = make_ctx(Role.CTO_CEO)
+        result = self.rewrite("SELECT * FROM person", ctx)
+        assert "department_id" not in result
+        assert "nsubteam_id" not in result
+        assert "1 = 0" not in result
+
+    def test_hr_manager_no_scope_injected(self):
+        ctx = make_ctx(Role.HR_MANAGER)
+        result = self.rewrite("SELECT full_name FROM person WHERE status_id = 10", ctx)
+        assert "department_id" not in result
+        assert "nsubteam_id" not in result
+        assert "1 = 0" not in result
+
+    # --- dept_head scope injection ---
+
+    def test_dept_head_injects_department_filter(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        sql = "SELECT full_name FROM person WHERE status_id = 10"
+        result = self.rewrite(sql, ctx)
+        assert "department_id = 3" in result
+
+    def test_dept_head_scope_defeats_or_injection(self):
+        """WHERE (... OR 1=1) AND department_id=3 still restricts to dept 3."""
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        injected_sql = "SELECT * FROM person WHERE department_id = 3 OR 1=1"
+        result = self.rewrite(injected_sql, ctx)
+        # Scope condition must appear AND'd after the injected conditions.
+        assert "department_id = 3" in result
+        # The original OR condition must be wrapped in parens.
+        assert "(" in result
+
+    def test_dept_head_no_existing_where(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=5)
+        sql = "SELECT full_name FROM person"
+        result = self.rewrite(sql, ctx)
+        assert "department_id = 5" in result
+
+    def test_dept_head_missing_dept_denies_all(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=None)
+        result = self.rewrite("SELECT * FROM person", ctx)
+        assert "1 = 0" in result
+
+    def test_dept_head_only_injects_on_person_table(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        sql = "SELECT COUNT(*) FROM leave_record WHERE status = 1"
+        result = self.rewrite(sql, ctx)
+        # No person table → no scope injection.
+        assert "department_id" not in result
+
+    def test_dept_head_different_dept_ids(self):
+        sql = "SELECT * FROM person"
+        r1 = self.rewrite(sql, make_ctx(Role.DEPT_HEAD, dept_id=1))
+        r2 = self.rewrite(sql, make_ctx(Role.DEPT_HEAD, dept_id=2))
+        assert "department_id = 1" in r1
+        assert "department_id = 2" in r2
+        assert r1 != r2
+
+    # --- team_lead scope injection ---
+
+    def test_team_lead_injects_person_team_subquery(self):
+        ctx = make_ctx(Role.TEAM_LEAD, team_id=7)
+        sql = "SELECT full_name FROM person WHERE status_id = 10"
+        result = self.rewrite(sql, ctx)
+        assert "nsubteam_id = 7" in result
+        assert "person_team" in result
+        assert "end_date IS NULL" in result
+
+    def test_team_lead_scope_defeats_or_injection(self):
+        ctx = make_ctx(Role.TEAM_LEAD, team_id=7)
+        injected = "SELECT * FROM person WHERE 1=1"
+        result = self.rewrite(injected, ctx)
+        assert "nsubteam_id = 7" in result
+        assert "(" in result  # original WHERE wrapped
+
+    def test_team_lead_missing_team_denies_all(self):
+        ctx = make_ctx(Role.TEAM_LEAD, team_id=None)
+        result = self.rewrite("SELECT * FROM person", ctx)
+        assert "1 = 0" in result
+
+    # --- non-SELECT rejection (all roles, all statement types) ---
+
+    @pytest.mark.parametrize("role,kwargs", [
+        (Role.DEPT_HEAD,  {"dept_id": 3}),
+        (Role.TEAM_LEAD,  {"team_id": 7}),
+        (Role.HR_MANAGER, {}),
+        (Role.CTO_CEO,    {}),
+    ])
+    @pytest.mark.parametrize("sql", [
+        "INSERT INTO person (full_name) VALUES ('x')",
+        "UPDATE person SET status_id = 11 WHERE id = 1",
+        "DELETE FROM person WHERE id = 1",
+        "DROP TABLE person",
+        "TRUNCATE TABLE person",
+        "ALTER TABLE person ADD COLUMN foo TEXT",
+        "CREATE TABLE shadow AS SELECT * FROM person",
+        "GRANT SELECT ON person TO attacker",
+        "REVOKE SELECT ON person FROM hr_user",
+    ])
+    def test_non_select_blocked_for_all_roles(self, role, kwargs, sql):
+        ctx = make_ctx(role, **kwargs)
+        with pytest.raises(ValueError, match="Non-SELECT"):
+            self.rewrite(sql, ctx)
+
+    # --- table alias handling ---
+
+    def test_dept_head_with_table_alias(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        sql = "SELECT p.full_name FROM person p WHERE p.status_id = 10"
+        result = self.rewrite(sql, ctx)
+        assert "department_id = 3" in result
+
+    def test_team_lead_with_table_alias(self):
+        ctx = make_ctx(Role.TEAM_LEAD, team_id=7)
+        sql = "SELECT p.full_name FROM person p JOIN leave_record lr ON lr.person_id = p.id"
+        result = self.rewrite(sql, ctx)
+        assert "nsubteam_id = 7" in result
+
+
+# ---------------------------------------------------------------------------
+# Negative RBAC tests — boundary violations and bypass attempts
+# ---------------------------------------------------------------------------
+
+class TestNegativeRBAC:
+    """
+    Tests that verify access is DENIED or RESTRICTED in cases where it should
+    be. Complement to the positive tests above.
+    """
+
+    def setup_method(self):
+        from core.rbac.sql_guard import rewrite_sql
+        self.rewrite = rewrite_sql
+
+    # --- scope prompt must not grant unrestricted access to restricted roles ---
+
+    def test_dept_head_prompt_not_full_access(self):
+        prompt = make_ctx(Role.DEPT_HEAD, dept_id=3).scope_prompt()
+        assert "full company-wide access" not in prompt
+
+    def test_team_lead_prompt_not_full_access(self):
+        prompt = make_ctx(Role.TEAM_LEAD, team_id=7).scope_prompt()
+        assert "full company-wide access" not in prompt
+
+    def test_dept_head_prompt_does_not_leak_other_dept(self):
+        prompt = make_ctx(Role.DEPT_HEAD, dept_id=3).scope_prompt()
+        assert "department_id = 4" not in prompt
+        assert "department_id = 99" not in prompt
+
+    def test_team_lead_prompt_does_not_leak_other_team(self):
+        prompt = make_ctx(Role.TEAM_LEAD, team_id=7).scope_prompt()
+        assert "nsubteam_id = 8" not in prompt
+        assert "nsubteam_id = 99" not in prompt
+
+    # --- can_see_employee: denied cases ---
+
+    def test_dept_head_no_dept_id_cannot_see_anyone(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=None)
+        assert ctx.can_see_employee(dept_id=1, team_id=None) is False
+
+    def test_team_lead_no_team_id_cannot_see_anyone(self):
+        ctx = make_ctx(Role.TEAM_LEAD, team_id=None)
+        assert ctx.can_see_employee(dept_id=None, team_id=1) is False
+
+    def test_dept_head_wrong_dept_denied(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        assert ctx.can_see_employee(dept_id=4, team_id=None) is False
+        assert ctx.can_see_employee(dept_id=99, team_id=None) is False
+
+    def test_team_lead_wrong_team_denied(self):
+        ctx = make_ctx(Role.TEAM_LEAD, team_id=7)
+        assert ctx.can_see_employee(dept_id=None, team_id=8) is False
+        assert ctx.can_see_employee(dept_id=None, team_id=99) is False
+
+    def test_dept_head_has_team_id_but_no_dept_id_denied(self):
+        # Misconfigured: dept_head given team_id instead of dept_id.
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=None, team_id=5)
+        assert ctx.can_see_employee(dept_id=5, team_id=5) is False
+
+    def test_team_lead_has_dept_id_but_no_team_id_denied(self):
+        # Misconfigured: team_lead given dept_id instead of team_id.
+        ctx = make_ctx(Role.TEAM_LEAD, dept_id=3, team_id=None)
+        assert ctx.can_see_employee(dept_id=3, team_id=3) is False
+
+    # --- strip_forbidden: must not redact non-forbidden words ---
+
+    def test_partial_word_not_redacted(self):
+        # "nic" inside "clinic" must not trigger forbidden-column redaction.
+        ctx = make_ctx(Role.HR_MANAGER)
+        text = "The clinic handled the case."
+        assert ctx.strip_forbidden(text) == text
+
+    def test_unrelated_text_passes_through_unchanged(self):
+        ctx = make_ctx(Role.CTO_CEO)
+        text = "Team velocity increased by 12% this sprint."
+        assert ctx.strip_forbidden(text) == text
+
+    # --- sql_guard: bypass attempts ---
+
+    def test_dept_head_injected_wrong_dept_still_scoped_correctly(self):
+        # LLM emits WHERE department_id = 99 — scope guard overrides with AND dept=3.
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        result = self.rewrite("SELECT * FROM person WHERE department_id = 99", ctx)
+        assert "department_id = 3" in result
+        assert "(" in result  # injected condition wrapped in parens
+
+    def test_union_both_branches_scoped(self):
+        # UNION queries: both branches touching person must be scoped.
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        sql = (
+            "SELECT id FROM person WHERE status_id = 1 "
+            "UNION ALL "
+            "SELECT id FROM person WHERE status_id = 2"
+        )
+        result = self.rewrite(sql, ctx)
+        assert result.count("department_id = 3") >= 2
+
+    def test_subquery_person_reference_scoped(self):
+        # Outer query on another table, inner subquery on person — guard must scope inner.
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        sql = (
+            "SELECT lr.id FROM leave_record lr "
+            "WHERE lr.person_id IN (SELECT id FROM person WHERE 1=1)"
+        )
+        assert "department_id = 3" in self.rewrite(sql, ctx)
+
+    def test_team_lead_union_both_branches_scoped(self):
+        ctx = make_ctx(Role.TEAM_LEAD, team_id=7)
+        sql = (
+            "SELECT id FROM person WHERE status_id = 1 "
+            "UNION ALL "
+            "SELECT id FROM person WHERE status_id = 2"
+        )
+        assert self.rewrite(sql, ctx).count("nsubteam_id = 7") >= 2
+
+    def test_none_rbac_ctx_select_allowed(self):
+        # None ctx: SELECT passes through (no scope injection, no crash).
+        result = self.rewrite("SELECT * FROM person", None)
+        assert "department_id" not in result
+        assert "nsubteam_id" not in result
+
+    def test_none_rbac_ctx_non_select_blocked(self):
+        # None ctx: non-SELECT still blocked — no role can write.
+        with pytest.raises(ValueError, match="Non-SELECT"):
+            self.rewrite("DELETE FROM person WHERE id = 1", None)
