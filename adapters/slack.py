@@ -190,6 +190,7 @@ def _fetch_thread_history(
     bot_user_id: Optional[str],
     current_ts: str,
     requester_user_id: str,
+    is_dm: bool,
 ) -> list[dict]:
     """
     Fetch prior messages in a Slack thread and return them as a list of
@@ -198,30 +199,30 @@ def _fetch_thread_history(
     Slack ts, not its text, so a repeated question doesn't also drop the
     requester's earlier identical turns.
 
-    Only the requester's own turns are included: their messages, and bot
-    replies to them. In a shared channel thread other users may hold
-    different RBAC roles — feeding their Q&A to the agent would leak
-    answers across scopes (e.g. a CTO's answer becoming context for a
-    team lead's question).
+    Only the requester's own message turns are ever included. Bot replies are
+    included only in a DM (is_dm=True), where the requester is the sole human
+    so every bot answer is theirs. In a shared channel thread bot replies are
+    dropped entirely: replies are posted asynchronously, so a bot answer to
+    another user (with a different RBAC role) can land right after the
+    requester's message and be misattributed to them, leaking a broader-scope
+    answer into the requester's context.
 
     Returns an empty list on any error so a history failure never blocks
     the main query.
     """
     try:
-        resp = client.conversations_replies(
-            channel=channel,
-            ts=thread_ts,
-            limit=_HISTORY_MAX_TURNS + 5,  # fetch a few extra to account for skipped msgs
-        )
+        # Page from the current message (latest) so long threads use recent
+        # context, not the oldest messages Slack returns by default.
+        kwargs = dict(channel=channel, ts=thread_ts, limit=_HISTORY_MAX_TURNS + 5)
+        if current_ts:
+            kwargs.update(latest=current_ts, inclusive=True)
+        resp = client.conversations_replies(**kwargs)
         messages = resp.get("messages", [])
     except Exception as exc:
         logger.warning("Failed to fetch thread history: %s", exc)
         return []
 
     history: list[dict] = []
-    # True while the most recent human message was the requester's — bot
-    # replies are only included when they answer the requester.
-    last_human_was_requester = False
     for msg in messages:
         # Skip the current (just-arrived) message by its unique ts.
         if msg.get("ts") == current_ts:
@@ -231,14 +232,11 @@ def _fetch_thread_history(
             continue
         is_bot = (bot_user_id and msg.get("user") == bot_user_id) or msg.get("bot_id")
         if is_bot:
-            if not last_human_was_requester:
-                continue  # bot reply to another user — different RBAC scope
-            history.append({"role": "assistant", "content": text})
-            continue
+            if is_dm:
+                history.append({"role": "assistant", "content": text})
+            continue  # channel threads: drop bot turns (cross-scope risk)
         if msg.get("user") != requester_user_id:
-            last_human_was_requester = False
             continue
-        last_human_was_requester = True
         # Strip Slack mrkdwn bot-mention prefix (e.g. "<@U123> ") from user messages.
         if text.startswith("<@"):
             text = text.split(">", 1)[-1].strip()
@@ -258,6 +256,7 @@ def process_event(
     channel: str,
     thread_ts: str,
     message_ts: str = "",
+    is_dm: bool = False,
 ) -> None:
     """
     Look up the user, run the agent with RBAC scope, and post the answer
@@ -265,6 +264,8 @@ def process_event(
 
     message_ts is the ts of the just-arrived event message — used to exclude
     it from the thread history fetched for conversation continuity.
+    is_dm marks a 1:1 direct message; in a shared channel thread bot replies
+    are excluded from history (see _fetch_thread_history).
 
     This function is intentionally synchronous so it can be called from a
     FastAPI BackgroundTask without requiring an event loop.
@@ -340,6 +341,7 @@ def process_event(
         bot_user_id=bot_user_id,
         current_ts=message_ts,
         requester_user_id=slack_user_id,
+        is_dm=is_dm,
     )
     history_fetch_ms = int((time.monotonic() - t_history) * 1000)
 

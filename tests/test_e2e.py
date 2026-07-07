@@ -266,6 +266,15 @@ class TestQueryIdentityForgery:
         assert r.status_code == 200
         assert r.json()["answer"] == MOCK_ANSWER
 
+    def test_admin_no_slack_id_allowed(self, client, prod_mode):
+        # Authenticated admin may run without a slack_user_id — no RBAC scope
+        # is applied, but the admin credentials are proof enough of identity.
+        r = client.post("/query", json={
+            "query": "How many employees?",
+        }, headers=_ADMIN_HEADERS)
+        assert r.status_code == 200
+        assert r.json()["answer"] == MOCK_ANSWER
+
     def test_dev_mode_still_open(self, client, registered_user):
         # With ALLOW_UNAUTHENTICATED_QUERY=true (module default here), no auth needed.
         r = client.post("/query", json={
@@ -436,3 +445,9 @@ class TestAuditLog:
         r = client.get("/audit?limit=-5", headers=_ADMIN_HEADERS)
         assert r.status_code == 200
         assert isinstance(r.json(), list)
+
+    def test_limit_zero_returns_empty(self, client):
+        # limit=0 clamps to max(0, min(0, 1000)) == 0 → an empty list.
+        r = client.get("/audit?limit=0", headers=_ADMIN_HEADERS)
+        assert r.status_code == 200
+        assert r.json() == []

@@ -6,9 +6,8 @@ from sqlalchemy.orm import Session
 
 from api.deps import app_engine, check_rate_limit, require_admin_unless_open, write_audit
 from core.agent import query as agent_query
-from core.config import settings
 from core.rbac.context import RBACContext
-from core.rbac.models import HRUser
+from core.rbac.models import AdminUser, HRUser
 
 router = APIRouter()
 
@@ -22,12 +21,11 @@ class QueryResponse(BaseModel):
     answer: str
 
 
-@router.post(
-    "/query",
-    response_model=QueryResponse,
-    dependencies=[Depends(require_admin_unless_open)],
-)
-def run_query(body: QueryRequest):
+@router.post("/query", response_model=QueryResponse)
+def run_query(
+    body: QueryRequest,
+    admin: Optional[AdminUser] = Depends(require_admin_unless_open),
+):
     """
     Natural-language HR query endpoint.
 
@@ -35,17 +33,13 @@ def run_query(body: QueryRequest):
     (local dev). slack_user_id selects the RBAC scope to apply — it is not an
     identity proof; end-user traffic goes through the signed Slack webhook.
 
-    - No slack_user_id: runs without RBAC (open access, useful for local testing).
+    - No slack_user_id: runs without RBAC. Allowed only for an authenticated
+      admin or when ALLOW_UNAUTHENTICATED_QUERY=true — require_admin_unless_open
+      has already enforced this, so no further auth check is needed here.
     - With slack_user_id: enforces RBAC based on the user's registered role.
     """
     if not body.query.strip():
         raise HTTPException(status_code=400, detail="Query must not be empty.")
-
-    if not body.slack_user_id and not settings.ALLOW_UNAUTHENTICATED_QUERY:
-        raise HTTPException(
-            status_code=403,
-            detail="Authentication required. Set ALLOW_UNAUTHENTICATED_QUERY=true for local dev.",
-        )
 
     rbac_ctx = None
     employee_id = None

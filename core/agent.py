@@ -175,7 +175,14 @@ def _build_agent(rbac_ctx=None):
     _original_run = db.run
 
     def _scoped_run(command, fetch="all", **kwargs):
-        command = _rewrite(command, rbac_ctx)
+        try:
+            command = _rewrite(command, rbac_ctx)
+        except ValueError as exc:
+            # Surface guard rejections (forbidden column, wildcard, non-SELECT,
+            # unclassified table) to the agent as a tool observation so it can
+            # rewrite the SQL.  LangChain's run_no_throw only catches
+            # SQLAlchemyError, so a raised ValueError would abort the whole run.
+            return f"Error: {exc}"
         return _original_run(command, fetch=fetch, **kwargs)
 
     db.run = _scoped_run

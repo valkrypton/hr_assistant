@@ -58,7 +58,7 @@ class TestFetchThreadHistory:
     REQUESTER = "U_REQUESTER"
     OTHER = "U_OTHER"
 
-    def fetch(self, messages, current_ts):
+    def fetch(self, messages, current_ts, is_dm):
         client = StubClient(messages)
         return _fetch_thread_history(
             client=client,
@@ -67,6 +67,7 @@ class TestFetchThreadHistory:
             bot_user_id=self.BOT_ID,
             current_ts=current_ts,
             requester_user_id=self.REQUESTER,
+            is_dm=is_dm,
         )
 
     def test_excludes_other_users_question_and_bot_reply_to_them(self):
@@ -78,7 +79,9 @@ class TestFetchThreadHistory:
             {"user": self.REQUESTER, "text": "current question",
              "ts": "1700000003.000300"},
         ]
-        history = self.fetch(messages, current_ts="1700000003.000300")
+        # Channel thread (is_dm=False): bot reply is excluded regardless of
+        # who it was meant for — this assertion holds either way.
+        history = self.fetch(messages, current_ts="1700000003.000300", is_dm=False)
         contents = [h["content"] for h in history]
         assert "what is the other user's salary band?" not in contents
         assert "reply meant for the other user" not in contents
@@ -92,7 +95,9 @@ class TestFetchThreadHistory:
             {"user": self.REQUESTER, "text": "current question",
              "ts": "1700000003.000300"},
         ]
-        history = self.fetch(messages, current_ts="1700000003.000300")
+        # DM (is_dm=True): bot replies are included since the requester is
+        # the sole human in the thread.
+        history = self.fetch(messages, current_ts="1700000003.000300", is_dm=True)
         assert history == [
             {"role": "user", "content": "earlier question"},
             {"role": "assistant", "content": "earlier answer"},
@@ -103,7 +108,7 @@ class TestFetchThreadHistory:
             {"user": self.REQUESTER, "text": "current question",
              "ts": "1700000001.000100"},
         ]
-        history = self.fetch(messages, current_ts="1700000001.000100")
+        history = self.fetch(messages, current_ts="1700000001.000100", is_dm=True)
         assert history == []
 
     def test_repeated_identical_question_keeps_earlier_turn(self):
@@ -122,9 +127,36 @@ class TestFetchThreadHistory:
             {"user": self.BOT_ID, "bot_id": "B1", "text": "second answer",
              "ts": "1700000004.000400"},
         ]
-        history = self.fetch(messages, current_ts="1700000003.000300")
+        # DM: bot replies are involved, so this must run with is_dm=True.
+        history = self.fetch(messages, current_ts="1700000003.000300", is_dm=True)
         # The earlier identical question and its bot reply ARE included.
         assert {"role": "user", "content": "status?"} in history
         assert {"role": "assistant", "content": "first answer"} in history
         # The current message is NOT — only the earlier "status?" survives.
         assert history.count({"role": "user", "content": "status?"}) == 1
+
+    def test_channel_thread_drops_bot_turns(self):
+        # In a shared channel thread (is_dm=False), bot turns are dropped
+        # entirely — a bot reply posted to another user could otherwise be
+        # misattributed to the requester, leaking a different RBAC scope.
+        messages = [
+            {"user": self.REQUESTER, "text": "requester question",
+             "ts": "1700000001.000100"},
+            {"user": self.BOT_ID, "bot_id": "B1", "text": "bot reply",
+             "ts": "1700000002.000200"},
+        ]
+        history = self.fetch(messages, current_ts="1700000003.000300", is_dm=False)
+        assert {"role": "user", "content": "requester question"} in history
+        assert all(h["role"] != "assistant" for h in history)
+
+    def test_dm_keeps_bot_turns(self):
+        # Same messages as above, but in a DM (is_dm=True) both turns are kept.
+        messages = [
+            {"user": self.REQUESTER, "text": "requester question",
+             "ts": "1700000001.000100"},
+            {"user": self.BOT_ID, "bot_id": "B1", "text": "bot reply",
+             "ts": "1700000002.000200"},
+        ]
+        history = self.fetch(messages, current_ts="1700000003.000300", is_dm=True)
+        assert {"role": "user", "content": "requester question"} in history
+        assert {"role": "assistant", "content": "bot reply"} in history

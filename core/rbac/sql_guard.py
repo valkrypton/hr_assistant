@@ -53,6 +53,27 @@ _PERSON_TEAM_FK_TABLES = frozenset({
     "annual_review_response",
 })
 
+# Lookup/reference tables that hold no per-person employee data, so restricted
+# roles may read them company-wide (department names, leave types, holidays,
+# competency dimensions, etc.).  Any table that is neither `person`, nor
+# person-linked (the two sets above), nor listed here is treated as
+# unclassified: for restricted roles the guard fails closed rather than risk
+# leaking an unscoped person-bearing table added to INCLUDED_TABLES later.
+_PERSON_FREE_TABLES = frozenset({
+    "department",
+    "team",
+    "designation",
+    "employment_type",
+    "leave_type",
+    "leave_limit",
+    "holiday_record",
+    "competency_role",
+    "competency",
+    "competency_level",
+    "skill_category",
+    "job_requisition",
+})
+
 
 def rewrite_sql(sql: str, rbac_ctx: Optional["RBACContext"]) -> str:
     """
@@ -91,23 +112,42 @@ def rewrite_sql(sql: str, rbac_ctx: Optional["RBACContext"]) -> str:
             raise ValueError(
                 f"Non-SELECT statement blocked by scope guard: {type(bad).__name__}"
             )
+        # All table names/aliases in the statement — used to detect whole-row
+        # references below.
+        table_names = set()
+        for tbl in stmt.find_all(exp.Table):
+            table_names.add(tbl.alias_or_name.lower())
+            table_names.add(tbl.name.lower())
         # Forbidden columns (FR-5.8) are blocked for ALL roles at the SQL layer.
         # Any reference counts — SELECT list, WHERE, ORDER BY, aggregates —
         # since even filtering on salary leaks values via the result set.
+        # A bare, unqualified identifier that matches a table alias is a
+        # whole-row reference (SELECT p, to_jsonb(p)); sqlglot parses it as a
+        # Column named after the alias, so it would otherwise smuggle every
+        # column — including forbidden ones — past this check.
         for column in stmt.find_all(exp.Column):
-            if column.name and column.name.lower() in FORBIDDEN_COLUMNS:
+            name = (column.name or "").lower()
+            if name in FORBIDDEN_COLUMNS:
                 raise ValueError(
                     f"Forbidden column blocked by scope guard: {column.name}"
+                )
+            if not column.table and name in table_names:
+                raise ValueError(
+                    f"Whole-row reference blocked by scope guard: '{column.name}'. "
+                    "SELECT the specific columns you need."
                 )
         # Wildcard projections (SELECT *, SELECT p.*) would bypass the check
         # above — sqlglot represents * as exp.Star, not exp.Column — and could
         # return forbidden columns.  Reject them so the agent must enumerate
-        # columns explicitly.  COUNT(*) is allowed: it returns no column data.
+        # columns explicitly.  COUNT(*) and EXISTS (SELECT * ...) are allowed:
+        # neither returns column data.
         for star in stmt.find_all(exp.Star):
             parent = star.parent
             if isinstance(parent, exp.Column):  # qualified star, e.g. p.*
                 parent = parent.parent
             if isinstance(parent, exp.Count):
+                continue
+            if star.find_ancestor(exp.Exists) is not None:
                 continue
             raise ValueError(
                 "Wildcard projection blocked by scope guard: "
@@ -129,22 +169,33 @@ def _inject_scope_into_tree(tree: exp.Expression, rbac_ctx: "RBACContext") -> No
     # SELECT subqueries, which a live find_all() generator would re-visit
     # and re-scope.
     for select in list(tree.find_all(exp.Select)):
+        # Scope the person table itself if present.
         alias = _person_alias(select)
         if alias is not None:
-            # person is present — its predicate constrains every joined
-            # person-linked table, so scope person only.  Also injecting on
-            # linked tables would break LEFT JOIN semantics for legit queries.
             scope_sql = _scope_sql(rbac_ctx, alias)
             if scope_sql:
                 _inject_and(select, scope_sql)
-            continue
-        # No person reference — scope each person-linked table directly.
+        # Independently scope every person-linked table in this SELECT,
+        # regardless of whether person is also present.  A spurious or
+        # cartesian join to person (CROSS JOIN person, JOIN person ON 1=1)
+        # does not constrain these tables, so relying on person's predicate
+        # alone would leave them unscoped.
         for table in _select_tables(select):
             name = table.name.lower()
+            if name == "person":
+                continue  # already scoped above
             if name in _PERSON_FK_TABLES:
                 _inject_and(select, _fk_scope_sql(rbac_ctx, table.alias_or_name, "person_id"))
             elif name in _PERSON_TEAM_FK_TABLES:
                 _inject_and(select, _person_team_fk_scope_sql(rbac_ctx, table.alias_or_name))
+            elif name not in _PERSON_FREE_TABLES:
+                # Unclassified table under a restricted role — fail closed
+                # rather than risk leaking an unscoped person-bearing table.
+                raise ValueError(
+                    f"Table '{name}' is not classified for scope enforcement; "
+                    "it must be registered as person-linked or person-free in "
+                    "sql_guard before a restricted role can query it."
+                )
 
 
 def _select_tables(select: exp.Select) -> list[exp.Table]:

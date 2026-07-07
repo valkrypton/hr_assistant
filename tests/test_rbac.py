@@ -597,16 +597,26 @@ class TestPersonLinkedTableScope:
         assert "person_team_id" in result
         assert "department_id = 3" in result
 
-    def test_person_join_present_scopes_person_only(self):
-        # With a person join the person predicate constrains the linked table;
-        # no redundant predicate (which would break LEFT JOIN semantics).
+    def test_person_join_present_scopes_both_person_and_fk_table(self):
+        # person is scoped directly; leave_record is scoped independently via
+        # its own person_id FK subquery — a LEFT JOIN to person does not
+        # constrain the joined table, so both predicates must be present.
         ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
         sql = (
             "SELECT p.full_name, lr.start FROM person p "
             "LEFT JOIN leave_record lr ON lr.person_id = p.id"
         )
         result = self.rewrite(sql, ctx)
-        assert result.count("department_id = 3") == 1
+        assert result.count("department_id = 3") == 2
+
+    def test_cross_join_person_still_scopes_fk_table(self):
+        # A CROSS JOIN to person does not constrain leave_record at all —
+        # both tables must still receive their own scope predicate.
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        sql = "SELECT lr.person_id FROM leave_record lr CROSS JOIN person p"
+        result = self.rewrite(sql, ctx)
+        assert "p.department_id = 3" in result
+        assert "lr.person_id IN (SELECT id FROM person WHERE department_id = 3)" in result
 
     def test_subquery_on_linked_table_scoped(self):
         # person in outer query, leave_record alone in subquery — inner scoped too.
@@ -760,12 +770,13 @@ class TestWildcardProjectionGuard:
         with pytest.raises(ValueError, match="Wildcard"):
             self.rewrite("SELECT p.* FROM person p", ctx)
 
-    def test_star_in_subquery_blocked(self):
-        # Intentionally strict — the agent should use SELECT 1 in EXISTS subqueries.
+    def test_star_in_exists_subquery_allowed(self):
+        # EXISTS (SELECT * ...) returns no column data — the star inside an
+        # EXISTS subquery cannot leak forbidden columns, so it is allowed.
         ctx = make_ctx(Role.HR_MANAGER)
         sql = "SELECT full_name FROM person WHERE EXISTS (SELECT * FROM leave_record)"
-        with pytest.raises(ValueError, match="Wildcard"):
-            self.rewrite(sql, ctx)
+        result = self.rewrite(sql, ctx)
+        assert "EXISTS" in result
 
     def test_count_star_allowed_for_unrestricted(self):
         ctx = make_ctx(Role.CTO_CEO)
@@ -783,6 +794,81 @@ class TestWildcardProjectionGuard:
         result = self.rewrite("SELECT COUNT(*) FROM person WHERE status_id = 10", ctx)
         assert "COUNT(*)" in result
         assert "status_id = 10" in result
+
+
+# ---------------------------------------------------------------------------
+# sql_guard — whole-row references blocked at the SQL layer
+# ---------------------------------------------------------------------------
+
+class TestWholeRowReferenceGuard:
+    """
+    A bare, unqualified identifier matching a table alias (SELECT p,
+    to_jsonb(p)) is a whole-row reference — sqlglot parses it as a Column
+    named after the alias, which would otherwise smuggle every column,
+    including forbidden ones, past the forbidden-column check.
+    """
+
+    def setup_method(self):
+        from core.rbac.sql_guard import rewrite_sql
+        self.rewrite = rewrite_sql
+
+    @pytest.mark.parametrize("ctx", [
+        None,
+        make_ctx(Role.CTO_CEO),
+        make_ctx(Role.DEPT_HEAD, dept_id=3),
+    ])
+    def test_bare_alias_select_blocked(self, ctx):
+        with pytest.raises(ValueError, match="Whole-row reference"):
+            self.rewrite("SELECT p FROM person p", ctx)
+
+    @pytest.mark.parametrize("ctx", [
+        None,
+        make_ctx(Role.CTO_CEO),
+        make_ctx(Role.DEPT_HEAD, dept_id=3),
+    ])
+    def test_to_jsonb_of_alias_blocked(self, ctx):
+        with pytest.raises(ValueError, match="Whole-row reference"):
+            self.rewrite("SELECT to_jsonb(p) FROM person p", ctx)
+
+    def test_qualified_column_not_treated_as_whole_row(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        result = self.rewrite("SELECT p.full_name FROM person p", ctx)
+        assert "department_id = 3" in result
+
+
+# ---------------------------------------------------------------------------
+# sql_guard — fail-closed on unclassified tables (restricted roles only)
+# ---------------------------------------------------------------------------
+
+class TestUnclassifiedTableGuard:
+    """
+    A table that is neither `person`, person-linked, nor person-free is
+    unclassified. Restricted roles must be denied (fail closed) rather than
+    risk leaking an unscoped person-bearing table; unrestricted roles are
+    unaffected since no scope injection happens for them at all.
+    """
+
+    def setup_method(self):
+        from core.rbac.sql_guard import rewrite_sql
+        self.rewrite = rewrite_sql
+
+    def test_unclassified_table_blocked_for_restricted_role(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        with pytest.raises(ValueError, match="not classified"):
+            self.rewrite("SELECT x FROM person_bonus", ctx)
+
+    def test_person_free_lookup_table_allowed_no_injection(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        result = self.rewrite("SELECT name FROM department", ctx)
+        assert "department_id" not in result
+        assert "1 = 0" not in result
+
+    def test_unclassified_table_allowed_for_unrestricted_role(self):
+        # Fail-closed only applies to restricted roles — unrestricted roles
+        # never go through scope injection, so unclassified tables pass.
+        ctx = make_ctx(Role.CTO_CEO)
+        result = self.rewrite("SELECT x FROM person_bonus", ctx)
+        assert "x" in result
 
 
 # ---------------------------------------------------------------------------
