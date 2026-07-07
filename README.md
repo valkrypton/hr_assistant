@@ -15,25 +15,33 @@ Natural-language workforce assistant that answers HR queries in plain English, b
 
 ```
 core/   — AI agent logic (zero dependency on api/)
-  agent.py              — LangChain SQL agent; injects full schema.md on every query
-  config.py             — Settings loaded from .env
-  providers/factory.py  — LLM factory (Ollama / OpenAI / Anthropic / xAI / QWEN)
-  vector_index.py       — Chroma index over team/project descriptions (FR-4 semantic search)
+  agent.py                — LangChain SQL agent; injects full schema.md on every query
+  config.py               — Settings (pydantic-settings), loaded from .env
+  rate_limit.py           — Shared rate-limit counting, used by both api/ and adapters/
+  rbac/models.py          — SQLAlchemy models (source of truth for the DB schema)
+  providers/factory.py    — LLM factory (Ollama / OpenAI / Anthropic / xAI / QWEN)
+  vector_index.py         — Chroma index over team/project descriptions (FR-4 semantic search)
   context/
-    schema.md           — Authoritative schema reference (tables, columns, business rules)
+    schema.md             — Authoritative schema reference (tables, columns, business rules)
 
 api/    — FastAPI HTTP layer (imports from core only)
-  main.py               — App setup, middleware, admin panel, router registration
-  routes/               — query, health, audit, users, slack endpoints
-  admin.py              — SQLAdmin views
+  main.py                 — App setup, middleware, admin panel, router registration
+  deps.py                 — Auth dependencies + DbDep (typed DB-session dependency)
+  routes/                 — thin HTTP handlers — query, health, audit, users, slack
+  services/               — business logic per route (query_service, user_service, audit_service)
+  schemas/                — Pydantic request/response models per route
+  admin.py                — SQLAdmin views
 
 adapters/
-  slack.py              — Slack Events API handler (signature verification, Block Kit replies)
+  slack.py                — Slack Events API handler (signature verification, Block Kit replies)
+
+migrations/                — Alembic migrations (schema source of truth going forward)
+alembic.ini
 
 scripts/
-  reindex.py            — Rebuild ERP content Chroma index (run nightly)
+  reindex.py              — Rebuild ERP content Chroma index (run nightly)
 
-index.html              — Single-file web UI (no server needed, works from file://)
+index.html                — Single-file web UI (no server needed, works from file://)
 ```
 
 **Request flow:**
@@ -60,6 +68,15 @@ Edit `.env`:
 | `RATE_LIMIT_PER_HOUR` | Max queries per user per hour (default: 30; set 0 to disable) |
 | `VECTOR_STORE_PATH` | Where to persist Chroma DB for ERP semantic search (default: `./data/chroma`) |
 | `VECTOR_EMBEDDING_MODEL` | Ollama embedding model for ERP search (default: `nomic-embed-text`) |
+
+Create the app-DB tables (`hr_admin_users`, `hr_assistant_users`, `hr_assistant_audit`):
+
+```bash
+alembic upgrade head
+```
+
+Schema changes to `core/rbac/models.py` go through Alembic from here on:
+`alembic revision --autogenerate -m "..."` to generate a migration, then `alembic upgrade head` to apply it.
 
 ### Local ERP (no real ERP database)
 
@@ -242,3 +259,4 @@ What is Bilal Qureshi's competency score?
 | 2 — RBAC | Complete | Role-scoped answers per requester |
 | 3 — Slack | Complete | `@hr-agent` mentions with Block Kit cards |
 | 4 — Hardening | Complete | Rate limits, token tracking, retry logic, E2E tests |
+| 5 — Backend structure | Complete | Alembic migrations, `services/`/`schemas/` layering, typed DB-session dependency, pydantic-settings config |

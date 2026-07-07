@@ -948,6 +948,7 @@ class TestCountRecentQueries:
             ))
             session.commit()
 
-        assert count_recent_queries(engine, "U1") == 3
-        assert count_recent_queries(engine, "U2") == 1
-        assert count_recent_queries(engine, "U_UNKNOWN") == 0
+        with Session(engine) as session:
+            assert count_recent_queries(session, "U1") == 3
+            assert count_recent_queries(session, "U2") == 1
+            assert count_recent_queries(session, "U_UNKNOWN") == 0

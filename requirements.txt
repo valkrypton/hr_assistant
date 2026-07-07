@@ -12,6 +12,10 @@ psycopg2-binary>=2.9     # PostgreSQL driver
 
 # Configuration
 python-dotenv>=1.0
+pydantic-settings>=2.0
+
+# Schema migrations
+alembic>=1.13
 
 # Vector index (semantic search)
 chromadb>=0.5

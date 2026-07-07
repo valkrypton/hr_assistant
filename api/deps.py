@@ -1,13 +1,15 @@
 """
 Shared dependencies for the API layer.
 
-Provides engine factories and the audit-log writer used across multiple routes.
+Provides engine factories, the DB-session dependency, and the audit-log
+writer used across multiple routes.
 """
+from contextlib import contextmanager
 from functools import lru_cache
-from typing import Optional
+from typing import Annotated, Iterator, Optional
 
 import sqlalchemy
-from fastapi import HTTPException, Security
+from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 
@@ -73,7 +75,25 @@ def erp_engine():
     return sqlalchemy.create_engine(settings.DATABASE_URL)
 
 
-def check_rate_limit(slack_user_id: str) -> None:
+@contextmanager
+def db_session() -> Iterator[Session]:
+    """Open a Session on the app engine. Usable outside a request (e.g. the
+    Slack background task), unlike get_db() below which is FastAPI-only."""
+    with Session(app_engine()) as session:
+        yield session
+
+
+def get_db() -> Iterator[Session]:
+    """FastAPI dependency — one Session per request, shared by every DB call
+    the route makes instead of each opening its own."""
+    with db_session() as session:
+        yield session
+
+
+DbDep = Annotated[Session, Depends(get_db)]
+
+
+def check_rate_limit(session: Session, slack_user_id: str) -> None:
     """
     Raise HTTP 429 if the user has hit RATE_LIMIT_PER_HOUR queries in the
     last 60 minutes. Uses the audit log as the source of truth — no extra
@@ -83,7 +103,7 @@ def check_rate_limit(slack_user_id: str) -> None:
     if limit <= 0:
         return
 
-    count = count_recent_queries(app_engine(), slack_user_id)
+    count = count_recent_queries(session, slack_user_id)
 
     if count >= limit:
         raise HTTPException(
@@ -93,6 +113,7 @@ def check_rate_limit(slack_user_id: str) -> None:
 
 
 def write_audit(
+    session: Session,
     *,
     slack_user_id: Optional[str],
     employee_id: Optional[int],
@@ -109,20 +130,19 @@ def write_audit(
     total_tokens: Optional[int] = None,
 ) -> None:
     """Append one row to the audit log in the app DB (FR-6.1 / FR-6.2)."""
-    with Session(app_engine()) as session:
-        session.add(AuditLog(
-            slack_user_id=slack_user_id,
-            employee_id=employee_id,
-            role=role,
-            question=question,
-            answer=answer,
-            tables_accessed=tables_accessed,
-            error=error,
-            schema_rag_ms=schema_rag_ms,
-            agent_ms=agent_ms,
-            total_ms=total_ms,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-        ))
-        session.commit()
+    session.add(AuditLog(
+        slack_user_id=slack_user_id,
+        employee_id=employee_id,
+        role=role,
+        question=question,
+        answer=answer,
+        tables_accessed=tables_accessed,
+        error=error,
+        schema_rag_ms=schema_rag_ms,
+        agent_ms=agent_ms,
+        total_ms=total_ms,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+    ))
+    session.commit()
