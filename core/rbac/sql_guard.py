@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Optional
 import sqlglot
 import sqlglot.expressions as exp
 
+from core.rbac.context import FORBIDDEN_COLUMNS
+
 if TYPE_CHECKING:
     from core.rbac.context import RBACContext
 
@@ -27,16 +29,62 @@ _BLOCKED_NODE_TYPES = (
     exp.Create, exp.Drop, exp.Alter, exp.TruncateTable,
 )
 
+# Tables that carry employee data via a direct person_id FK.  When one of
+# these appears in a SELECT without a person join, the scope predicate is
+# injected on the table itself — otherwise restricted roles could read
+# company-wide data (e.g. SELECT * FROM leave_record) with no person
+# reference for the guard to anchor on.
+_PERSON_FK_TABLES = frozenset({
+    "person_team",
+    "leave_record",
+    "person_week_log",
+    "person_competency",
+    "person_skill_category",
+    "users_personresignation",
+    "core_personstatushistory",
+    "core_personemploymenthistory",
+    "core_personemploymenttypehistory",
+    "person_leave_limit",
+})
+
+# Tables linked to a person indirectly through person_team_id.
+_PERSON_TEAM_FK_TABLES = frozenset({
+    "person_week_project",
+    "annual_review_response",
+})
+
+# Lookup/reference tables that hold no per-person employee data, so restricted
+# roles may read them company-wide (department names, leave types, holidays,
+# competency dimensions, etc.).  Any table that is neither `person`, nor
+# person-linked (the two sets above), nor listed here is treated as
+# unclassified: for restricted roles the guard fails closed rather than risk
+# leaking an unscoped person-bearing table added to INCLUDED_TABLES later.
+_PERSON_FREE_TABLES = frozenset({
+    "department",
+    "team",
+    "designation",
+    "employment_type",
+    "leave_type",
+    "leave_limit",
+    "holiday_record",
+    "competency_role",
+    "competency",
+    "competency_level",
+    "skill_category",
+    "job_requisition",
+})
+
 
 def rewrite_sql(sql: str, rbac_ctx: Optional["RBACContext"]) -> str:
     """
-    Parse sql, reject non-SELECT statements, then inject scope predicates
-    into every SELECT node that references the person table.
+    Parse sql, reject non-SELECT statements and forbidden-column references,
+    then inject scope predicates into every SELECT node that references the
+    person table or a person-linked table (person_id / person_team_id FK).
 
-    Non-SELECT blocking applies to ALL callers including None ctx and
-    unrestricted roles — nobody may run INSERT/UPDATE/DELETE/DROP.
-    Scope injection is only applied for restricted roles (dept_head,
-    team_lead).
+    Non-SELECT and forbidden-column blocking applies to ALL callers including
+    None ctx and unrestricted roles — nobody may run INSERT/UPDATE/DELETE/DROP
+    or read salary/NIC/DOB-class columns.  Scope injection is only applied for
+    restricted roles (dept_head, team_lead).
 
     Returns the rewritten SQL string.  Raises ValueError on parse errors
     or non-SELECT statements (the LangChain agent surfaces these as tool
@@ -64,6 +112,47 @@ def rewrite_sql(sql: str, rbac_ctx: Optional["RBACContext"]) -> str:
             raise ValueError(
                 f"Non-SELECT statement blocked by scope guard: {type(bad).__name__}"
             )
+        # All table names/aliases in the statement — used to detect whole-row
+        # references below.
+        table_names = set()
+        for tbl in stmt.find_all(exp.Table):
+            table_names.add(tbl.alias_or_name.lower())
+            table_names.add(tbl.name.lower())
+        # Forbidden columns (FR-5.8) are blocked for ALL roles at the SQL layer.
+        # Any reference counts — SELECT list, WHERE, ORDER BY, aggregates —
+        # since even filtering on salary leaks values via the result set.
+        # A bare, unqualified identifier that matches a table alias is a
+        # whole-row reference (SELECT p, to_jsonb(p)); sqlglot parses it as a
+        # Column named after the alias, so it would otherwise smuggle every
+        # column — including forbidden ones — past this check.
+        for column in stmt.find_all(exp.Column):
+            name = (column.name or "").lower()
+            if name in FORBIDDEN_COLUMNS:
+                raise ValueError(
+                    f"Forbidden column blocked by scope guard: {column.name}"
+                )
+            if not column.table and name in table_names:
+                raise ValueError(
+                    f"Whole-row reference blocked by scope guard: '{column.name}'. "
+                    "SELECT the specific columns you need."
+                )
+        # Wildcard projections (SELECT *, SELECT p.*) would bypass the check
+        # above — sqlglot represents * as exp.Star, not exp.Column — and could
+        # return forbidden columns.  Reject them so the agent must enumerate
+        # columns explicitly.  COUNT(*) and EXISTS (SELECT * ...) are allowed:
+        # neither returns column data.
+        for star in stmt.find_all(exp.Star):
+            parent = star.parent
+            if isinstance(parent, exp.Column):  # qualified star, e.g. p.*
+                parent = parent.parent
+            if isinstance(parent, exp.Count):
+                continue
+            if star.find_ancestor(exp.Exists) is not None:
+                continue
+            raise ValueError(
+                "Wildcard projection blocked by scope guard: "
+                "SELECT the specific columns you need (COUNT(*) is allowed)."
+            )
         if restricted:
             _inject_scope_into_tree(stmt, rbac_ctx)
         rewritten.append(stmt.sql(dialect="postgres"))
@@ -76,13 +165,49 @@ def rewrite_sql(sql: str, rbac_ctx: Optional["RBACContext"]) -> str:
 # ---------------------------------------------------------------------------
 
 def _inject_scope_into_tree(tree: exp.Expression, rbac_ctx: "RBACContext") -> None:
-    for select in tree.find_all(exp.Select):
+    # Materialise before mutating — injected predicates contain their own
+    # SELECT subqueries, which a live find_all() generator would re-visit
+    # and re-scope.
+    for select in list(tree.find_all(exp.Select)):
+        # Scope the person table itself if present.
         alias = _person_alias(select)
-        if alias is None:
-            continue
-        scope_sql = _scope_sql(rbac_ctx, alias)
-        if scope_sql:
-            _inject_and(select, scope_sql)
+        if alias is not None:
+            scope_sql = _scope_sql(rbac_ctx, alias)
+            if scope_sql:
+                _inject_and(select, scope_sql)
+        # Independently scope every person-linked table in this SELECT,
+        # regardless of whether person is also present.  A spurious or
+        # cartesian join to person (CROSS JOIN person, JOIN person ON 1=1)
+        # does not constrain these tables, so relying on person's predicate
+        # alone would leave them unscoped.
+        for table in _select_tables(select):
+            name = table.name.lower()
+            if name == "person":
+                continue  # already scoped above
+            if name in _PERSON_FK_TABLES:
+                _inject_and(select, _fk_scope_sql(rbac_ctx, table.alias_or_name, "person_id"))
+            elif name in _PERSON_TEAM_FK_TABLES:
+                _inject_and(select, _person_team_fk_scope_sql(rbac_ctx, table.alias_or_name))
+            elif name not in _PERSON_FREE_TABLES:
+                # Unclassified table under a restricted role — fail closed
+                # rather than risk leaking an unscoped person-bearing table.
+                raise ValueError(
+                    f"Table '{name}' is not classified for scope enforcement; "
+                    "it must be registered as person-linked or person-free in "
+                    "sql_guard before a restricted role can query it."
+                )
+
+
+def _select_tables(select: exp.Select) -> list[exp.Table]:
+    """Immediate FROM/JOIN table references of this SELECT — not descendants."""
+    tables: list[exp.Table] = []
+    from_clause = select.args.get("from_")
+    if from_clause and isinstance(from_clause.this, exp.Table):
+        tables.append(from_clause.this)
+    for join in select.args.get("joins", []) or []:
+        if isinstance(join.this, exp.Table):
+            tables.append(join.this)
+    return tables
 
 
 def _person_alias(select: exp.Select) -> Optional[str]:
@@ -93,14 +218,8 @@ def _person_alias(select: exp.Select) -> Optional[str]:
     belong to an inner scope, causing the outer WHERE injection to reference an
     alias that doesn't exist at that level.
     """
-    from_clause = select.args.get("from_")
-    if from_clause:
-        table = from_clause.this
-        if isinstance(table, exp.Table) and table.name.lower() == "person":
-            return table.alias_or_name
-    for join in select.args.get("joins", []) or []:
-        table = join.this
-        if isinstance(table, exp.Table) and table.name.lower() == "person":
+    for table in _select_tables(select):
+        if table.name.lower() == "person":
             return table.alias_or_name
     return None
 
@@ -128,6 +247,46 @@ def _scope_sql(rbac_ctx: "RBACContext", person_alias: str) -> Optional[str]:
 
     # Unknown restricted role — deny all person data.
     return "1 = 0"
+
+
+def _scoped_person_ids_sql(rbac_ctx: "RBACContext") -> Optional[str]:
+    """Subquery yielding the person ids visible to this restricted role,
+    or None when the role is misconfigured (caller must deny all)."""
+    role = rbac_ctx.role.value
+
+    if role == "dept_head":
+        if rbac_ctx.department_id is None:
+            return None
+        return f"SELECT id FROM person WHERE department_id = {int(rbac_ctx.department_id)}"
+
+    if role == "team_lead":
+        if rbac_ctx.team_id is None:
+            return None
+        return (
+            f"SELECT person_id FROM person_team "
+            f"WHERE nsubteam_id = {int(rbac_ctx.team_id)} "
+            f"AND end_date IS NULL AND is_active = true"
+        )
+
+    return None
+
+
+def _fk_scope_sql(rbac_ctx: "RBACContext", alias: str, fk_column: str) -> str:
+    person_ids = _scoped_person_ids_sql(rbac_ctx)
+    if person_ids is None:
+        return "1 = 0"
+    return f"{alias}.{fk_column} IN ({person_ids})"
+
+
+def _person_team_fk_scope_sql(rbac_ctx: "RBACContext", alias: str) -> str:
+    person_ids = _scoped_person_ids_sql(rbac_ctx)
+    if person_ids is None:
+        return "1 = 0"
+    return (
+        f"{alias}.person_team_id IN ("
+        f"SELECT id FROM person_team WHERE person_id IN ({person_ids})"
+        f")"
+    )
 
 
 def _inject_and(select: exp.Select, scope_sql: str) -> None:

@@ -301,7 +301,7 @@ class TestSQLGuard:
 
     def test_unrestricted_no_scope_injected(self):
         ctx = make_ctx(Role.CTO_CEO)
-        result = self.rewrite("SELECT * FROM person", ctx)
+        result = self.rewrite("SELECT id FROM person", ctx)
         assert "department_id" not in result
         assert "nsubteam_id" not in result
         assert "1 = 0" not in result
@@ -324,7 +324,7 @@ class TestSQLGuard:
     def test_dept_head_scope_defeats_or_injection(self):
         """WHERE (... OR 1=1) AND department_id=3 still restricts to dept 3."""
         ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
-        injected_sql = "SELECT * FROM person WHERE department_id = 3 OR 1=1"
+        injected_sql = "SELECT id FROM person WHERE department_id = 3 OR 1=1"
         result = self.rewrite(injected_sql, ctx)
         # Scope condition must appear AND'd after the injected conditions.
         assert "department_id = 3" in result
@@ -339,18 +339,26 @@ class TestSQLGuard:
 
     def test_dept_head_missing_dept_denies_all(self):
         ctx = make_ctx(Role.DEPT_HEAD, dept_id=None)
-        result = self.rewrite("SELECT * FROM person", ctx)
+        result = self.rewrite("SELECT id FROM person", ctx)
         assert "1 = 0" in result
 
-    def test_dept_head_only_injects_on_person_table(self):
+    def test_dept_head_non_person_table_still_scoped(self):
+        # leave_record carries person_id — must be scoped even without a person join.
         ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
         sql = "SELECT COUNT(*) FROM leave_record WHERE status = 1"
         result = self.rewrite(sql, ctx)
-        # No person table → no scope injection.
+        assert "department_id = 3" in result
+        assert "person_id" in result
+
+    def test_dept_head_no_scope_on_unlinked_table(self):
+        # holiday_record has no person link → no scope injection.
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        sql = "SELECT COUNT(*) FROM holiday_record WHERE is_active = true"
+        result = self.rewrite(sql, ctx)
         assert "department_id" not in result
 
     def test_dept_head_different_dept_ids(self):
-        sql = "SELECT * FROM person"
+        sql = "SELECT id FROM person"
         r1 = self.rewrite(sql, make_ctx(Role.DEPT_HEAD, dept_id=1))
         r2 = self.rewrite(sql, make_ctx(Role.DEPT_HEAD, dept_id=2))
         assert "department_id = 1" in r1
@@ -369,14 +377,14 @@ class TestSQLGuard:
 
     def test_team_lead_scope_defeats_or_injection(self):
         ctx = make_ctx(Role.TEAM_LEAD, team_id=7)
-        injected = "SELECT * FROM person WHERE 1=1"
+        injected = "SELECT id FROM person WHERE 1=1"
         result = self.rewrite(injected, ctx)
         assert "nsubteam_id = 7" in result
         assert "(" in result  # original WHERE wrapped
 
     def test_team_lead_missing_team_denies_all(self):
         ctx = make_ctx(Role.TEAM_LEAD, team_id=None)
-        result = self.rewrite("SELECT * FROM person", ctx)
+        result = self.rewrite("SELECT id FROM person", ctx)
         assert "1 = 0" in result
 
     # --- non-SELECT rejection (all roles, all statement types) ---
@@ -500,7 +508,7 @@ class TestNegativeRBAC:
     def test_dept_head_injected_wrong_dept_still_scoped_correctly(self):
         # LLM emits WHERE department_id = 99 — scope guard overrides with AND dept=3.
         ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
-        result = self.rewrite("SELECT * FROM person WHERE department_id = 99", ctx)
+        result = self.rewrite("SELECT id FROM person WHERE department_id = 99", ctx)
         assert "department_id = 3" in result
         assert "(" in result  # injected condition wrapped in parens
 
@@ -535,7 +543,7 @@ class TestNegativeRBAC:
 
     def test_none_rbac_ctx_select_allowed(self):
         # None ctx: SELECT passes through (no scope injection, no crash).
-        result = self.rewrite("SELECT * FROM person", None)
+        result = self.rewrite("SELECT id FROM person", None)
         assert "department_id" not in result
         assert "nsubteam_id" not in result
 
@@ -543,3 +551,403 @@ class TestNegativeRBAC:
         # None ctx: non-SELECT still blocked — no role can write.
         with pytest.raises(ValueError, match="Non-SELECT"):
             self.rewrite("DELETE FROM person WHERE id = 1", None)
+
+
+# ---------------------------------------------------------------------------
+# sql_guard — person-linked tables scoped without a person join
+# ---------------------------------------------------------------------------
+
+class TestPersonLinkedTableScope:
+    """
+    Restricted roles must not read company-wide data through tables that
+    carry employee data via person_id (or person_team_id) instead of a
+    person join. Previously these queries bypassed the scope guard entirely.
+    """
+
+    def setup_method(self):
+        from core.rbac.sql_guard import rewrite_sql
+        self.rewrite = rewrite_sql
+
+    @pytest.mark.parametrize("table", [
+        "leave_record", "person_team", "person_week_log", "person_competency",
+        "person_skill_category", "users_personresignation",
+        "core_personstatushistory", "core_personemploymenthistory",
+    ])
+    def test_dept_head_person_fk_tables_scoped(self, table):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        result = self.rewrite(f"SELECT id FROM {table}", ctx)
+        assert "department_id = 3" in result
+        assert "person_id" in result
+
+    def test_team_lead_person_fk_table_scoped(self):
+        ctx = make_ctx(Role.TEAM_LEAD, team_id=7)
+        result = self.rewrite("SELECT person_id, start FROM leave_record WHERE status = 1", ctx)
+        assert "nsubteam_id = 7" in result
+
+    def test_dept_head_person_team_fk_table_scoped(self):
+        # person_week_project links via person_team_id, not person_id.
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        result = self.rewrite("SELECT hours FROM person_week_project", ctx)
+        assert "person_team_id" in result
+        assert "department_id = 3" in result
+
+    def test_dept_head_annual_review_scoped(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        result = self.rewrite("SELECT skill_rate FROM annual_review_response", ctx)
+        assert "person_team_id" in result
+        assert "department_id = 3" in result
+
+    def test_person_join_present_scopes_both_person_and_fk_table(self):
+        # person is scoped directly; leave_record is scoped independently via
+        # its own person_id FK subquery — a LEFT JOIN to person does not
+        # constrain the joined table, so both predicates must be present.
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        sql = (
+            "SELECT p.full_name, lr.start FROM person p "
+            "LEFT JOIN leave_record lr ON lr.person_id = p.id"
+        )
+        result = self.rewrite(sql, ctx)
+        assert result.count("department_id = 3") == 2
+
+    def test_cross_join_person_still_scopes_fk_table(self):
+        # A CROSS JOIN to person does not constrain leave_record at all —
+        # both tables must still receive their own scope predicate.
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        sql = "SELECT lr.person_id FROM leave_record lr CROSS JOIN person p"
+        result = self.rewrite(sql, ctx)
+        assert "p.department_id = 3" in result
+        assert "lr.person_id IN (SELECT id FROM person WHERE department_id = 3)" in result
+
+    def test_subquery_on_linked_table_scoped(self):
+        # person in outer query, leave_record alone in subquery — inner scoped too.
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        sql = (
+            "SELECT full_name FROM person WHERE id IN "
+            "(SELECT person_id FROM leave_record WHERE status = 1)"
+        )
+        result = self.rewrite(sql, ctx)
+        assert result.count("department_id = 3") >= 2
+
+    def test_dept_head_missing_dept_denies_linked_table(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=None)
+        result = self.rewrite("SELECT id FROM leave_record", ctx)
+        assert "1 = 0" in result
+
+    def test_team_lead_missing_team_denies_linked_table(self):
+        ctx = make_ctx(Role.TEAM_LEAD, team_id=None)
+        result = self.rewrite("SELECT id FROM person_week_log", ctx)
+        assert "1 = 0" in result
+
+    def test_unrestricted_linked_tables_untouched(self):
+        ctx = make_ctx(Role.HR_MANAGER)
+        sql = "SELECT COUNT(*) FROM leave_record WHERE status = 1"
+        result = self.rewrite(sql, ctx)
+        assert "department_id" not in result
+        assert "nsubteam_id" not in result
+
+    def test_linked_table_with_alias_scoped(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        result = self.rewrite("SELECT lr.start FROM leave_record lr WHERE lr.status = 1", ctx)
+        assert "department_id = 3" in result
+        assert "lr." in result
+
+    def test_union_linked_table_both_branches_scoped(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        sql = (
+            "SELECT person_id FROM leave_record WHERE status = 1 "
+            "UNION ALL "
+            "SELECT person_id FROM person_week_log WHERE is_completed = false"
+        )
+        result = self.rewrite(sql, ctx)
+        assert result.count("department_id = 3") >= 2
+
+
+# ---------------------------------------------------------------------------
+# sql_guard — forbidden columns blocked at the SQL layer (FR-5.8)
+# ---------------------------------------------------------------------------
+
+class TestForbiddenColumnsSQLGuard:
+    """
+    Forbidden columns (salary, NIC, DOB, …) must be blocked in the SQL layer
+    for ALL roles — prompt-only enforcement is bypassable via prompt injection.
+    """
+
+    def setup_method(self):
+        from core.rbac.sql_guard import rewrite_sql
+        self.rewrite = rewrite_sql
+
+    @pytest.mark.parametrize("ctx", [
+        None,
+        make_ctx(Role.CTO_CEO),
+        make_ctx(Role.HR_MANAGER),
+        make_ctx(Role.DEPT_HEAD, dept_id=3),
+        make_ctx(Role.TEAM_LEAD, team_id=7),
+    ])
+    def test_forbidden_select_blocked_for_all_roles(self, ctx):
+        with pytest.raises(ValueError, match="Forbidden column"):
+            self.rewrite("SELECT salary FROM person", ctx)
+
+    @pytest.mark.parametrize("col", [
+        "salary", "gross_salary", "cnic", "date_of_birth", "dob",
+        "bank_account", "personal_phone", "personal_email", "home_address",
+    ])
+    def test_each_forbidden_column_blocked(self, col):
+        ctx = make_ctx(Role.HR_MANAGER)
+        with pytest.raises(ValueError, match="Forbidden column"):
+            self.rewrite(f"SELECT {col} FROM person", ctx)
+
+    def test_forbidden_in_where_clause_blocked(self):
+        # Filtering on salary leaks values via the result set even if not selected.
+        ctx = make_ctx(Role.HR_MANAGER)
+        with pytest.raises(ValueError, match="Forbidden column"):
+            self.rewrite("SELECT full_name FROM person WHERE salary > 500000", ctx)
+
+    def test_forbidden_in_order_by_blocked(self):
+        ctx = make_ctx(Role.HR_MANAGER)
+        with pytest.raises(ValueError, match="Forbidden column"):
+            self.rewrite("SELECT full_name FROM person ORDER BY salary DESC", ctx)
+
+    def test_forbidden_in_subquery_blocked(self):
+        ctx = make_ctx(Role.HR_MANAGER)
+        sql = (
+            "SELECT full_name FROM person WHERE id IN "
+            "(SELECT id FROM person WHERE salary > 100000)"
+        )
+        with pytest.raises(ValueError, match="Forbidden column"):
+            self.rewrite(sql, ctx)
+
+    def test_forbidden_in_aggregate_blocked(self):
+        ctx = make_ctx(Role.CTO_CEO)
+        with pytest.raises(ValueError, match="Forbidden column"):
+            self.rewrite("SELECT AVG(salary) FROM person", ctx)
+
+    def test_case_insensitive_blocked(self):
+        ctx = make_ctx(Role.HR_MANAGER)
+        with pytest.raises(ValueError, match="Forbidden column"):
+            self.rewrite("SELECT SALARY FROM person", ctx)
+
+    def test_clean_query_passes(self):
+        ctx = make_ctx(Role.HR_MANAGER)
+        result = self.rewrite("SELECT full_name, joining_date FROM person", ctx)
+        assert "full_name" in result
+
+    def test_similar_but_allowed_column_passes(self):
+        # separation_date is allowed — must not be caught by substring logic.
+        ctx = make_ctx(Role.HR_MANAGER)
+        result = self.rewrite("SELECT full_name, separation_date FROM person", ctx)
+        assert "separation_date" in result
+
+
+# ---------------------------------------------------------------------------
+# sql_guard — wildcard projections blocked at the SQL layer
+# ---------------------------------------------------------------------------
+
+class TestWildcardProjectionGuard:
+    """
+    SELECT * (and qualified variants like p.*) must be rejected for ALL roles:
+    sqlglot represents * as exp.Star, not exp.Column, so it would otherwise
+    bypass the forbidden-column check above and smuggle forbidden columns
+    past the guard.  COUNT(*) is exempt since it returns no column data.
+    """
+
+    def setup_method(self):
+        from core.rbac.sql_guard import rewrite_sql
+        self.rewrite = rewrite_sql
+
+    @pytest.mark.parametrize("ctx", [
+        None,
+        make_ctx(Role.CTO_CEO),
+        make_ctx(Role.HR_MANAGER),
+        make_ctx(Role.DEPT_HEAD, dept_id=3),
+        make_ctx(Role.TEAM_LEAD, team_id=7),
+    ])
+    def test_select_star_blocked_for_all_roles(self, ctx):
+        with pytest.raises(ValueError, match="Wildcard"):
+            self.rewrite("SELECT * FROM person", ctx)
+
+    def test_qualified_star_blocked(self):
+        ctx = make_ctx(Role.HR_MANAGER)
+        with pytest.raises(ValueError, match="Wildcard"):
+            self.rewrite("SELECT p.* FROM person p", ctx)
+
+    def test_star_in_exists_subquery_allowed(self):
+        # EXISTS (SELECT * ...) returns no column data — the star inside an
+        # EXISTS subquery cannot leak forbidden columns, so it is allowed.
+        ctx = make_ctx(Role.HR_MANAGER)
+        sql = "SELECT full_name FROM person WHERE EXISTS (SELECT * FROM leave_record)"
+        result = self.rewrite(sql, ctx)
+        assert "EXISTS" in result
+
+    def test_count_star_allowed_for_unrestricted(self):
+        ctx = make_ctx(Role.CTO_CEO)
+        result = self.rewrite("SELECT COUNT(*) FROM person", ctx)
+        assert "COUNT(*)" in result
+
+    def test_count_star_allowed_and_scoped_for_dept_head(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        result = self.rewrite("SELECT COUNT(*) FROM leave_record", ctx)
+        assert "COUNT(*)" in result
+        assert "department_id = 3" in result
+
+    def test_non_star_query_with_where_allowed(self):
+        ctx = make_ctx(Role.CTO_CEO)
+        result = self.rewrite("SELECT COUNT(*) FROM person WHERE status_id = 10", ctx)
+        assert "COUNT(*)" in result
+        assert "status_id = 10" in result
+
+
+# ---------------------------------------------------------------------------
+# sql_guard — whole-row references blocked at the SQL layer
+# ---------------------------------------------------------------------------
+
+class TestWholeRowReferenceGuard:
+    """
+    A bare, unqualified identifier matching a table alias (SELECT p,
+    to_jsonb(p)) is a whole-row reference — sqlglot parses it as a Column
+    named after the alias, which would otherwise smuggle every column,
+    including forbidden ones, past the forbidden-column check.
+    """
+
+    def setup_method(self):
+        from core.rbac.sql_guard import rewrite_sql
+        self.rewrite = rewrite_sql
+
+    @pytest.mark.parametrize("ctx", [
+        None,
+        make_ctx(Role.CTO_CEO),
+        make_ctx(Role.DEPT_HEAD, dept_id=3),
+    ])
+    def test_bare_alias_select_blocked(self, ctx):
+        with pytest.raises(ValueError, match="Whole-row reference"):
+            self.rewrite("SELECT p FROM person p", ctx)
+
+    @pytest.mark.parametrize("ctx", [
+        None,
+        make_ctx(Role.CTO_CEO),
+        make_ctx(Role.DEPT_HEAD, dept_id=3),
+    ])
+    def test_to_jsonb_of_alias_blocked(self, ctx):
+        with pytest.raises(ValueError, match="Whole-row reference"):
+            self.rewrite("SELECT to_jsonb(p) FROM person p", ctx)
+
+    def test_qualified_column_not_treated_as_whole_row(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        result = self.rewrite("SELECT p.full_name FROM person p", ctx)
+        assert "department_id = 3" in result
+
+
+# ---------------------------------------------------------------------------
+# sql_guard — fail-closed on unclassified tables (restricted roles only)
+# ---------------------------------------------------------------------------
+
+class TestUnclassifiedTableGuard:
+    """
+    A table that is neither `person`, person-linked, nor person-free is
+    unclassified. Restricted roles must be denied (fail closed) rather than
+    risk leaking an unscoped person-bearing table; unrestricted roles are
+    unaffected since no scope injection happens for them at all.
+    """
+
+    def setup_method(self):
+        from core.rbac.sql_guard import rewrite_sql
+        self.rewrite = rewrite_sql
+
+    def test_unclassified_table_blocked_for_restricted_role(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        with pytest.raises(ValueError, match="not classified"):
+            self.rewrite("SELECT x FROM person_bonus", ctx)
+
+    def test_person_free_lookup_table_allowed_no_injection(self):
+        ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
+        result = self.rewrite("SELECT name FROM department", ctx)
+        assert "department_id" not in result
+        assert "1 = 0" not in result
+
+    def test_unclassified_table_allowed_for_unrestricted_role(self):
+        # Fail-closed only applies to restricted roles — unrestricted roles
+        # never go through scope injection, so unclassified tables pass.
+        ctx = make_ctx(Role.CTO_CEO)
+        result = self.rewrite("SELECT x FROM person_bonus", ctx)
+        assert "x" in result
+
+
+# ---------------------------------------------------------------------------
+# core.agent._extract_tables — sqlglot-based table extraction for audit logging
+# ---------------------------------------------------------------------------
+
+class TestExtractTables:
+    @staticmethod
+    def make_step(sql: str):
+        """Build a fake (AgentAction, observation) tuple for a sql_db_query call."""
+        from types import SimpleNamespace
+        return (SimpleNamespace(tool="sql_db_query", tool_input=sql), "observation")
+
+    def extract(self, sql: str) -> str:
+        from core.agent import _extract_tables
+        return _extract_tables([self.make_step(sql)])
+
+    def test_plain_from_and_join(self):
+        result = self.extract(
+            "SELECT * FROM person JOIN department ON person.department_id = department.id"
+        )
+        assert result == "department, person"
+
+    def test_cte_alias_excluded_but_real_tables_reported(self):
+        result = self.extract(
+            "WITH x AS (SELECT * FROM person) "
+            "SELECT * FROM x JOIN leave_record ON x.id = leave_record.person_id"
+        )
+        tables = result.split(", ")
+        assert "person" in tables
+        assert "leave_record" in tables
+        assert "x" not in tables
+
+    def test_unparseable_sql_falls_back_to_regex_without_raising(self):
+        # sqlglot cannot parse this, but the regex fallback still finds "person"
+        # after FROM — the important part is that no exception escapes.
+        result = self.extract("SELECT * FROM person WHERE ((( totally $$ broken :::")
+        assert result == "person"
+
+    def test_no_sql_db_query_steps_returns_empty_string(self):
+        from core.agent import _extract_tables
+        assert _extract_tables([]) == ""
+
+
+# ---------------------------------------------------------------------------
+# core.rate_limit.count_recent_queries — shared rate-limit counting
+# ---------------------------------------------------------------------------
+
+class TestCountRecentQueries:
+    @staticmethod
+    def make_engine():
+        import sqlalchemy
+        from core.rbac.models import Base
+        engine = sqlalchemy.create_engine(
+            "sqlite:///:memory:",
+            poolclass=sqlalchemy.pool.StaticPool,
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(engine)
+        return engine
+
+    def test_counts_only_matching_user_within_last_hour(self):
+        from datetime import datetime, timedelta, timezone
+        from sqlalchemy.orm import Session
+        from core.rate_limit import count_recent_queries
+        from core.rbac.models import AuditLog
+
+        engine = self.make_engine()
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            for _ in range(3):
+                session.add(AuditLog(slack_user_id="U1", question="q", created_at=now))
+            session.add(AuditLog(slack_user_id="U2", question="q", created_at=now))
+            # Outside the 1-hour window — must not be counted.
+            session.add(AuditLog(
+                slack_user_id="U1", question="q", created_at=now - timedelta(hours=2),
+            ))
+            session.commit()
+
+        assert count_recent_queries(engine, "U1") == 3
+        assert count_recent_queries(engine, "U2") == 1
+        assert count_recent_queries(engine, "U_UNKNOWN") == 0

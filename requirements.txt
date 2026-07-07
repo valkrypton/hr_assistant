@@ -24,6 +24,7 @@ pydantic>=2.0
 
 # Admin panel
 sqladmin
+itsdangerous            # session cookie signing (SQLAdmin auth backend)
 
 # Slack integration
 slack_sdk>=3.0

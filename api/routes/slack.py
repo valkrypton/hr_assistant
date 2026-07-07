@@ -79,6 +79,8 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
                     text=text,
                     channel=channel,
                     thread_ts=thread_ts,
+                    message_ts=event.get("ts", ""),
+                    is_dm=event.get("channel_type") == "im",
                 )
 
     return JSONResponse({"ok": True})

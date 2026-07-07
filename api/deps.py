@@ -3,7 +3,6 @@ Shared dependencies for the API layer.
 
 Provides engine factories and the audit-log writer used across multiple routes.
 """
-from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Optional
 
@@ -14,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from core.auth import hash_password, verify_password
 from core.config import settings
+from core.rate_limit import count_recent_queries
 from core.rbac.models import AdminUser, AuditLog
 
 _basic_auth = HTTPBasic(auto_error=False)
@@ -46,6 +46,21 @@ def require_admin(credentials: Optional[HTTPBasicCredentials] = Security(_basic_
     return admin
 
 
+def require_admin_unless_open(
+    credentials: Optional[HTTPBasicCredentials] = Security(_basic_auth),
+) -> Optional[AdminUser]:
+    """
+    /query guard. slack_user_id in the request body selects an RBAC scope but
+    is NOT proof of identity (Slack IDs are public within a workspace), so the
+    request must be vouched for by admin credentials — unless
+    ALLOW_UNAUTHENTICATED_QUERY explicitly opts into open access (local dev).
+    Production RBAC traffic goes through the signature-verified Slack webhook.
+    """
+    if settings.ALLOW_UNAUTHENTICATED_QUERY:
+        return None
+    return require_admin(credentials)
+
+
 @lru_cache(maxsize=1)
 def app_engine():
     """Writable engine for our own tables (hr_assistant_users, audit logs, etc.)."""
@@ -68,16 +83,7 @@ def check_rate_limit(slack_user_id: str) -> None:
     if limit <= 0:
         return
 
-    since = datetime.now(timezone.utc) - timedelta(hours=1)
-    with Session(app_engine()) as session:
-        count = (
-            session.query(AuditLog)
-            .filter(
-                AuditLog.slack_user_id == slack_user_id,
-                AuditLog.created_at >= since,
-            )
-            .count()
-        )
+    count = count_recent_queries(app_engine(), slack_user_id)
 
     if count >= limit:
         raise HTTPException(
