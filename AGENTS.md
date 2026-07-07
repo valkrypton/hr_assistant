@@ -54,7 +54,7 @@ Two separate PostgreSQL connections:
 - `APP_DATABASE_URL` — writable app database (users, audit logs); defaults to `DATABASE_URL` for local dev
 
 **RBAC** (`core/rbac/`):
-Four roles: `cto_ceo`, `hr_manager`, `dept_head`, `team_lead`. Each role scopes what the agent may reveal. Forbidden columns (salary, NIC, DOB, etc.) are injected into every prompt regardless of role.
+Four roles: `cto_ceo`, `hr_manager`, `dept_head`, `team_lead`. Each role scopes what the agent may reveal. Forbidden columns (salary, NIC, DOB, etc.) are injected into every prompt regardless of role. Scope is enforced at the DB layer by `core/rbac/sql_guard.py` and proven by `tests/test_scope_execution.py`. Future enforcement directions (Postgres RLS, typed tools) are in [docs/rbac-hardening-roadmap.md](docs/rbac-hardening-roadmap.md).
 
 **Slack adapter** (`adapters/slack.py`):
 Verifies `X-Slack-Signature`, acks within 3 s, runs the agent in a FastAPI `BackgroundTask`, and posts Block Kit replies in-thread.
