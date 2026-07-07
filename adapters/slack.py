@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from core.agent import query as agent_query
 from core.config import settings
+from core.rate_limit import count_recent_queries
 from core.rbac.context import RBACContext
 from core.rbac.models import AuditLog, HRUser
 
@@ -56,7 +57,12 @@ def verify_signature(
     if abs(time.time() - ts) > 300:  # 5-minute replay window
         return False
 
-    base = f"v0:{request_timestamp}:{request_body.decode('utf-8')}"
+    try:
+        decoded_body = request_body.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+
+    base = f"v0:{request_timestamp}:{decoded_body}"
     expected = "v0=" + hmac.new(
         signing_secret.encode("utf-8"),
         base.encode("utf-8"),
@@ -183,11 +189,18 @@ def _fetch_thread_history(
     thread_ts: str,
     bot_user_id: Optional[str],
     current_text: str,
+    requester_user_id: str,
 ) -> list[dict]:
     """
     Fetch prior messages in a Slack thread and return them as a list of
     {"role": "user"|"assistant", "content": "..."} dicts, oldest first,
     excluding the current (just-arrived) message.
+
+    Only the requester's own turns are included: their messages, and bot
+    replies to them. In a shared channel thread other users may hold
+    different RBAC roles — feeding their Q&A to the agent would leak
+    answers across scopes (e.g. a CTO's answer becoming context for a
+    team lead's question).
 
     Returns an empty list on any error so a history failure never blocks
     the main query.
@@ -204,19 +217,30 @@ def _fetch_thread_history(
         return []
 
     history: list[dict] = []
+    # True while the most recent human message was the requester's — bot
+    # replies are only included when they answer the requester.
+    last_human_was_requester = False
     for msg in messages:
         text = msg.get("text", "").strip()
         if not text:
             continue
         is_bot = (bot_user_id and msg.get("user") == bot_user_id) or msg.get("bot_id")
-        # Skip the current message (it arrives as the last message in the thread).
-        if not is_bot and text == current_text:
+        if is_bot:
+            if not last_human_was_requester:
+                continue  # bot reply to another user — different RBAC scope
+            history.append({"role": "assistant", "content": text})
             continue
-        role = "assistant" if is_bot else "user"
+        if msg.get("user") != requester_user_id:
+            last_human_was_requester = False
+            continue
+        last_human_was_requester = True
+        # Skip the current message (it arrives as the last message in the thread).
+        if text == current_text:
+            continue
         # Strip Slack mrkdwn bot-mention prefix (e.g. "<@U123> ") from user messages.
-        if role == "user" and text.startswith("<@"):
+        if text.startswith("<@"):
             text = text.split(">", 1)[-1].strip()
-        history.append({"role": role, "content": text})
+        history.append({"role": "user", "content": text})
 
     # Keep only the most recent N turns.
     return history[-_HISTORY_MAX_TURNS:]
@@ -279,21 +303,10 @@ def process_event(
     # Rate limit check — post a friendly message and bail if exceeded.
     rate_check_ms = 0
     if hr_user:
-        from datetime import datetime, timedelta, timezone
-        from sqlalchemy.orm import Session
         limit = settings.RATE_LIMIT_PER_HOUR
         if limit > 0:
             t_rate = time.monotonic()
-            since = datetime.now(timezone.utc) - timedelta(hours=1)
-            with Session(_get_app_engine()) as session:
-                count = (
-                    session.query(AuditLog)
-                    .filter(
-                        AuditLog.slack_user_id == slack_user_id,
-                        AuditLog.created_at >= since,
-                    )
-                    .count()
-                )
+            count = count_recent_queries(_get_app_engine(), slack_user_id)
             rate_check_ms = int((time.monotonic() - t_rate) * 1000)
             if count >= limit:
                 try:
@@ -320,6 +333,7 @@ def process_event(
         thread_ts=thread_ts,
         bot_user_id=bot_user_id,
         current_text=text,
+        requester_user_id=slack_user_id,
     )
     history_fetch_ms = int((time.monotonic() - t_history) * 1000)
 

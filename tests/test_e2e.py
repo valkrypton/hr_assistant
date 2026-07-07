@@ -220,6 +220,62 @@ class TestQueryAuthenticated:
 
 
 # ---------------------------------------------------------------------------
+# /query — identity forgery protection
+# ---------------------------------------------------------------------------
+
+class TestQueryIdentityForgery:
+    """
+    slack_user_id in the request body is NOT proof of identity — Slack IDs
+    are public within a workspace. Without ALLOW_UNAUTHENTICATED_QUERY,
+    /query must demand admin credentials; otherwise anyone who knows a
+    privileged user's Slack ID could query with that user's role.
+    """
+
+    @pytest.fixture()
+    def prod_mode(self):
+        """Disable the dev-mode open-access flag for the duration of a test."""
+        from core.config import settings
+        with patch.object(settings, "ALLOW_UNAUTHENTICATED_QUERY", False):
+            yield
+
+    def test_forged_slack_id_without_auth_rejected(self, client, registered_user, prod_mode):
+        # The attack from the review: caller supplies a real user's Slack ID.
+        r = client.post("/query", json={
+            "query": "How many employees?",
+            "slack_user_id": registered_user,
+        })
+        assert r.status_code == 401
+
+    def test_no_slack_id_without_auth_rejected(self, client, prod_mode):
+        r = client.post("/query", json={"query": "How many employees?"})
+        assert r.status_code == 401
+
+    def test_wrong_admin_password_rejected(self, client, registered_user, prod_mode):
+        bad = {"Authorization": "Basic " + base64.b64encode(b"test-admin:wrong").decode()}
+        r = client.post("/query", json={
+            "query": "How many employees?",
+            "slack_user_id": registered_user,
+        }, headers=bad)
+        assert r.status_code == 401
+
+    def test_admin_vouched_query_allowed(self, client, registered_user, prod_mode):
+        r = client.post("/query", json={
+            "query": "How many employees?",
+            "slack_user_id": registered_user,
+        }, headers=_ADMIN_HEADERS)
+        assert r.status_code == 200
+        assert r.json()["answer"] == MOCK_ANSWER
+
+    def test_dev_mode_still_open(self, client, registered_user):
+        # With ALLOW_UNAUTHENTICATED_QUERY=true (module default here), no auth needed.
+        r = client.post("/query", json={
+            "query": "How many employees?",
+            "slack_user_id": registered_user,
+        })
+        assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # Rate limiting
 # ---------------------------------------------------------------------------
 
@@ -374,3 +430,9 @@ class TestAuditLog:
         assert entry is not None
         assert entry["total_ms"] == 210
         assert entry["prompt_tokens"] == 500
+
+    def test_negative_limit_clamped_not_rejected(self, client):
+        # A negative limit must not reach SQLAlchemy's .limit() unclamped.
+        r = client.get("/audit?limit=-5", headers=_ADMIN_HEADERS)
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)

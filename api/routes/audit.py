@@ -45,7 +45,7 @@ def get_audit_logs(
     - role: filter to a specific role (cto_ceo, hr_manager, dept_head, team_lead)
     - limit: max rows to return (default 100, max 1000)
     """
-    limit = min(limit, 1000)
+    limit = max(1, min(limit, 1000))
 
     def _parse_date(value: str, param: str) -> datetime:
         try:

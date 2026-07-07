@@ -1,10 +1,10 @@
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from api.deps import app_engine, check_rate_limit, write_audit
+from api.deps import app_engine, check_rate_limit, require_admin_unless_open, write_audit
 from core.agent import query as agent_query
 from core.config import settings
 from core.rbac.context import RBACContext
@@ -22,10 +22,18 @@ class QueryResponse(BaseModel):
     answer: str
 
 
-@router.post("/query", response_model=QueryResponse)
+@router.post(
+    "/query",
+    response_model=QueryResponse,
+    dependencies=[Depends(require_admin_unless_open)],
+)
 def run_query(body: QueryRequest):
     """
     Natural-language HR query endpoint.
+
+    Requires admin HTTP Basic auth unless ALLOW_UNAUTHENTICATED_QUERY=true
+    (local dev). slack_user_id selects the RBAC scope to apply — it is not an
+    identity proof; end-user traffic goes through the signed Slack webhook.
 
     - No slack_user_id: runs without RBAC (open access, useful for local testing).
     - With slack_user_id: enforces RBAC based on the user's registered role.

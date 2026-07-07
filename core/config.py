@@ -39,6 +39,13 @@ class Settings:
     # Restrict to actual proxy addresses in production.
     TRUSTED_PROXY_HOSTS: str = os.getenv("TRUSTED_PROXY_HOSTS", "127.0.0.1")
 
+    # CORS — comma-separated browser origins allowed to call the API.
+    # "*" is fine for local dev (index.html); set to the real frontend
+    # origin(s) in production.
+    CORS_ALLOW_ORIGINS: list[str] = [
+        o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()
+    ]
+
     # ERP database — read-only; used exclusively by the SQL agent.
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./data/company.db")
 
