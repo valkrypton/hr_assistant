@@ -43,7 +43,7 @@ def get_audit_logs(
     - from_date / to_date: ISO-8601 date strings (e.g. 2025-01-01)
     - slack_user_id: filter to a specific Slack user
     - role: filter to a specific role (cto_ceo, hr_manager, dept_head, team_lead)
-    - limit: max rows to return (default 100, max 1000)
+    - limit: max rows to return (default 100, min 1, max 1000)
     """
     limit = max(1, min(limit, 1000))
 
