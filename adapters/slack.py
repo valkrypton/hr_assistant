@@ -188,13 +188,15 @@ def _fetch_thread_history(
     channel: str,
     thread_ts: str,
     bot_user_id: Optional[str],
-    current_text: str,
+    current_ts: str,
     requester_user_id: str,
 ) -> list[dict]:
     """
     Fetch prior messages in a Slack thread and return them as a list of
     {"role": "user"|"assistant", "content": "..."} dicts, oldest first,
-    excluding the current (just-arrived) message.
+    excluding the current (just-arrived) message — matched by its unique
+    Slack ts, not its text, so a repeated question doesn't also drop the
+    requester's earlier identical turns.
 
     Only the requester's own turns are included: their messages, and bot
     replies to them. In a shared channel thread other users may hold
@@ -221,6 +223,9 @@ def _fetch_thread_history(
     # replies are only included when they answer the requester.
     last_human_was_requester = False
     for msg in messages:
+        # Skip the current (just-arrived) message by its unique ts.
+        if msg.get("ts") == current_ts:
+            continue
         text = msg.get("text", "").strip()
         if not text:
             continue
@@ -234,9 +239,6 @@ def _fetch_thread_history(
             last_human_was_requester = False
             continue
         last_human_was_requester = True
-        # Skip the current message (it arrives as the last message in the thread).
-        if text == current_text:
-            continue
         # Strip Slack mrkdwn bot-mention prefix (e.g. "<@U123> ") from user messages.
         if text.startswith("<@"):
             text = text.split(">", 1)[-1].strip()
@@ -255,10 +257,14 @@ def process_event(
     text: str,
     channel: str,
     thread_ts: str,
+    message_ts: str = "",
 ) -> None:
     """
     Look up the user, run the agent with RBAC scope, and post the answer
     as a Block Kit card inside the original thread.
+
+    message_ts is the ts of the just-arrived event message — used to exclude
+    it from the thread history fetched for conversation continuity.
 
     This function is intentionally synchronous so it can be called from a
     FastAPI BackgroundTask without requiring an event loop.
@@ -332,7 +338,7 @@ def process_event(
         channel=channel,
         thread_ts=thread_ts,
         bot_user_id=bot_user_id,
-        current_text=text,
+        current_ts=message_ts,
         requester_user_id=slack_user_id,
     )
     history_fetch_ms = int((time.monotonic() - t_history) * 1000)

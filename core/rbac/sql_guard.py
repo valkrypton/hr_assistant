@@ -99,6 +99,20 @@ def rewrite_sql(sql: str, rbac_ctx: Optional["RBACContext"]) -> str:
                 raise ValueError(
                     f"Forbidden column blocked by scope guard: {column.name}"
                 )
+        # Wildcard projections (SELECT *, SELECT p.*) would bypass the check
+        # above — sqlglot represents * as exp.Star, not exp.Column — and could
+        # return forbidden columns.  Reject them so the agent must enumerate
+        # columns explicitly.  COUNT(*) is allowed: it returns no column data.
+        for star in stmt.find_all(exp.Star):
+            parent = star.parent
+            if isinstance(parent, exp.Column):  # qualified star, e.g. p.*
+                parent = parent.parent
+            if isinstance(parent, exp.Count):
+                continue
+            raise ValueError(
+                "Wildcard projection blocked by scope guard: "
+                "SELECT the specific columns you need (COUNT(*) is allowed)."
+            )
         if restricted:
             _inject_scope_into_tree(stmt, rbac_ctx)
         rewritten.append(stmt.sql(dialect="postgres"))

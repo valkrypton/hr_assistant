@@ -58,35 +58,41 @@ class TestFetchThreadHistory:
     REQUESTER = "U_REQUESTER"
     OTHER = "U_OTHER"
 
-    def fetch(self, messages, current_text):
+    def fetch(self, messages, current_ts):
         client = StubClient(messages)
         return _fetch_thread_history(
             client=client,
             channel="C123",
             thread_ts="111.111",
             bot_user_id=self.BOT_ID,
-            current_text=current_text,
+            current_ts=current_ts,
             requester_user_id=self.REQUESTER,
         )
 
     def test_excludes_other_users_question_and_bot_reply_to_them(self):
         messages = [
-            {"user": self.OTHER, "text": "what is the other user's salary band?"},
-            {"user": self.BOT_ID, "bot_id": "B1", "text": "reply meant for the other user"},
-            {"user": self.REQUESTER, "text": "current question"},
+            {"user": self.OTHER, "text": "what is the other user's salary band?",
+             "ts": "1700000001.000100"},
+            {"user": self.BOT_ID, "bot_id": "B1", "text": "reply meant for the other user",
+             "ts": "1700000002.000200"},
+            {"user": self.REQUESTER, "text": "current question",
+             "ts": "1700000003.000300"},
         ]
-        history = self.fetch(messages, current_text="current question")
+        history = self.fetch(messages, current_ts="1700000003.000300")
         contents = [h["content"] for h in history]
         assert "what is the other user's salary band?" not in contents
         assert "reply meant for the other user" not in contents
 
     def test_includes_requesters_own_prior_turn_and_bot_reply(self):
         messages = [
-            {"user": self.REQUESTER, "text": "earlier question"},
-            {"user": self.BOT_ID, "bot_id": "B1", "text": "earlier answer"},
-            {"user": self.REQUESTER, "text": "current question"},
+            {"user": self.REQUESTER, "text": "earlier question",
+             "ts": "1700000001.000100"},
+            {"user": self.BOT_ID, "bot_id": "B1", "text": "earlier answer",
+             "ts": "1700000002.000200"},
+            {"user": self.REQUESTER, "text": "current question",
+             "ts": "1700000003.000300"},
         ]
-        history = self.fetch(messages, current_text="current question")
+        history = self.fetch(messages, current_ts="1700000003.000300")
         assert history == [
             {"role": "user", "content": "earlier question"},
             {"role": "assistant", "content": "earlier answer"},
@@ -94,7 +100,31 @@ class TestFetchThreadHistory:
 
     def test_excludes_current_message(self):
         messages = [
-            {"user": self.REQUESTER, "text": "current question"},
+            {"user": self.REQUESTER, "text": "current question",
+             "ts": "1700000001.000100"},
         ]
-        history = self.fetch(messages, current_text="current question")
+        history = self.fetch(messages, current_ts="1700000001.000100")
         assert history == []
+
+    def test_repeated_identical_question_keeps_earlier_turn(self):
+        # Regression (Copilot-reported): the requester asks the SAME question
+        # twice in a thread.  With the old text-based exclusion, the earlier
+        # identical message was dropped along with the current one.  Matching
+        # by ts must keep the earlier question and its bot reply while
+        # excluding only the current (second) message.
+        messages = [
+            {"user": self.REQUESTER, "text": "status?",
+             "ts": "1700000001.000100"},
+            {"user": self.BOT_ID, "bot_id": "B1", "text": "first answer",
+             "ts": "1700000002.000200"},
+            {"user": self.REQUESTER, "text": "status?",
+             "ts": "1700000003.000300"},
+            {"user": self.BOT_ID, "bot_id": "B1", "text": "second answer",
+             "ts": "1700000004.000400"},
+        ]
+        history = self.fetch(messages, current_ts="1700000003.000300")
+        # The earlier identical question and its bot reply ARE included.
+        assert {"role": "user", "content": "status?"} in history
+        assert {"role": "assistant", "content": "first answer"} in history
+        # The current message is NOT — only the earlier "status?" survives.
+        assert history.count({"role": "user", "content": "status?"}) == 1
