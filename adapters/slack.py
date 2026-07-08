@@ -21,7 +21,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import time
-from contextlib import contextmanager
 
 import structlog
 from slack_sdk import WebClient
@@ -30,9 +29,11 @@ from sqlalchemy.orm import Session
 
 from core.agent import query as agent_query
 from core.config import settings
+from core.db import db_session
 from core.rate_limit import count_recent_queries
 from core.rbac.context import RBACContext
-from core.rbac.models import AuditLog, HRUser
+from core.rbac.models import HRUser
+from core.telemetry.audit import write_audit
 
 logger = structlog.get_logger(__name__)
 
@@ -117,80 +118,12 @@ def _format_blocks(answer: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# DB helpers  (import-time engine avoidance — use the app engine lazily)
+# DB helpers
 # ---------------------------------------------------------------------------
-
-
-def _get_app_engine():
-    import sqlalchemy
-
-    global _app_engine
-    if _app_engine is None:
-        _app_engine = sqlalchemy.create_engine(settings.APP_DATABASE_URL)
-    return _app_engine
-
-
-_app_engine = None
-
-
-@contextmanager
-def _db_session():
-    """One short-lived Session per DB-only block. Not reused across the
-    agent_query()/Slack API calls in process_event — those can take up to
-    ~15s and shouldn't hold a pool connection idle for that whole span (this
-    mirrors api.deps.db_session(), duplicated locally since adapters/ must
-    not import from api/ — see AGENTS.md import rules)."""
-    with Session(_get_app_engine()) as session:
-        yield session
 
 
 def _lookup_user(session: Session, slack_user_id: str) -> HRUser | None:
     return session.query(HRUser).filter_by(slack_user_id=slack_user_id, is_active=True).first()
-
-
-def _write_audit(
-    session: Session,
-    *,
-    slack_user_id: str,
-    employee_id: int | None,
-    role: str | None,
-    question: str,
-    answer: str | None = None,
-    tables_accessed: str | None = None,
-    error: str | None = None,
-    schema_rag_ms: int | None = None,
-    agent_ms: int | None = None,
-    total_ms: int | None = None,
-    prompt_tokens: int | None = None,
-    completion_tokens: int | None = None,
-    total_tokens: int | None = None,
-    user_lookup_ms: int | None = None,
-    rate_check_ms: int | None = None,
-    history_fetch_ms: int | None = None,
-    slack_post_ms: int | None = None,
-) -> None:
-    session.add(
-        AuditLog(
-            slack_user_id=slack_user_id,
-            employee_id=employee_id,
-            role=role,
-            question=question,
-            answer=answer,
-            tables_accessed=tables_accessed,
-            error=error,
-            schema_rag_ms=schema_rag_ms,
-            agent_ms=agent_ms,
-            total_ms=total_ms,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            user_lookup_ms=user_lookup_ms,
-            rate_check_ms=rate_check_ms,
-            history_fetch_ms=history_fetch_ms,
-            slack_post_ms=slack_post_ms,
-        )
-    )
-    session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +233,7 @@ def process_event(
     # neither should hold a pool connection idle for their duration (the
     # agent call alone can take up to ~15s).
     t_lookup = time.monotonic()
-    with _db_session() as session:
+    with db_session() as session:
         hr_user = _lookup_user(session, slack_user_id)
         user_lookup_ms = int((time.monotonic() - t_lookup) * 1000)
 
@@ -396,8 +329,8 @@ def process_event(
             total_agent_ms=result.total_ms,
         )
 
-        with _db_session() as session:
-            _write_audit(
+        with db_session() as session:
+            write_audit(
                 session,
                 slack_user_id=slack_user_id,
                 employee_id=employee_id,
@@ -421,8 +354,8 @@ def process_event(
         logger.error("slack_api_error_posting_reply", error=exc.response["error"])
     except Exception as exc:
         logger.exception("slack_event_processing_failed", slack_user_id=slack_user_id)
-        with _db_session() as session:
-            _write_audit(
+        with db_session() as session:
+            write_audit(
                 session,
                 slack_user_id=slack_user_id,
                 employee_id=employee_id,

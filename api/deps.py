@@ -1,24 +1,40 @@
 """
 Shared dependencies for the API layer.
 
-Provides engine factories, the DB-session dependency, and the audit-log
-writer used across multiple routes.
+The engine factories, DB-session helper, and audit-log writer now live in
+core/ (core.db, core.telemetry.audit) so the messaging adapters can share them
+without importing api/. They are re-exported here for the existing API call
+sites. This module keeps the FastAPI-only pieces: HTTP Basic auth guards, the
+request-scoped session dependency, and the HTTP rate-limit check.
 """
 
 from collections.abc import Iterator
-from contextlib import contextmanager
 from functools import lru_cache
 from typing import Annotated
 
-import sqlalchemy
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 
 from core.auth import hash_password, verify_password
 from core.config import settings
+from core.db import app_engine, db_session, erp_engine
 from core.rate_limit import count_recent_queries
-from core.rbac.models import AdminUser, AuditLog
+from core.rbac.models import AdminUser
+from core.telemetry.audit import write_audit
+
+# Re-exported for API call sites that import these names from api.deps.
+__all__ = [
+    "app_engine",
+    "erp_engine",
+    "db_session",
+    "write_audit",
+    "get_db",
+    "DbDep",
+    "require_admin",
+    "require_admin_unless_open",
+    "check_rate_limit",
+]
 
 _basic_auth = HTTPBasic(auto_error=False)
 
@@ -70,26 +86,6 @@ def require_admin_unless_open(
     return require_admin(credentials)
 
 
-@lru_cache(maxsize=1)
-def app_engine():
-    """Writable engine for our own tables (hr_assistant_users, audit logs, etc.)."""
-    return sqlalchemy.create_engine(settings.APP_DATABASE_URL)
-
-
-@lru_cache(maxsize=1)
-def erp_engine():
-    """Read-only ERP engine — used only for the health check."""
-    return sqlalchemy.create_engine(settings.DATABASE_URL)
-
-
-@contextmanager
-def db_session() -> Iterator[Session]:
-    """Open a Session on the app engine. Usable outside a request (e.g. the
-    Slack background task), unlike get_db() below which is FastAPI-only."""
-    with Session(app_engine()) as session:
-        yield session
-
-
 def get_db() -> Iterator[Session]:
     """FastAPI dependency — one Session per request, shared by every DB call
     the route makes instead of each opening its own."""
@@ -117,41 +113,3 @@ def check_rate_limit(session: Session, slack_user_id: str) -> None:
             status_code=429,
             detail=f"Rate limit exceeded — max {limit} queries per hour. Try again later.",
         )
-
-
-def write_audit(
-    session: Session,
-    *,
-    slack_user_id: str | None,
-    employee_id: int | None,
-    role: str | None,
-    question: str,
-    answer: str | None = None,
-    tables_accessed: str | None = None,
-    error: str | None = None,
-    schema_rag_ms: int | None = None,
-    agent_ms: int | None = None,
-    total_ms: int | None = None,
-    prompt_tokens: int | None = None,
-    completion_tokens: int | None = None,
-    total_tokens: int | None = None,
-) -> None:
-    """Append one row to the audit log in the app DB (FR-6.1 / FR-6.2)."""
-    session.add(
-        AuditLog(
-            slack_user_id=slack_user_id,
-            employee_id=employee_id,
-            role=role,
-            question=question,
-            answer=answer,
-            tables_accessed=tables_accessed,
-            error=error,
-            schema_rag_ms=schema_rag_ms,
-            agent_ms=agent_ms,
-            total_ms=total_ms,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-        )
-    )
-    session.commit()

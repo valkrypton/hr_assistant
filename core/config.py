@@ -112,22 +112,26 @@ class Settings(BaseSettings):
         ]
         self.INCLUDED_TABLES = [t.strip() for t in self.INCLUDED_TABLES.split(",") if t.strip()]
 
-        # Preserve the pre-pydantic-settings defaults: DATABASE_URL falls back
-        # to the local sqlite ERP db, and APP_DATABASE_URL falls back to the
-        # raw DATABASE_URL env var (if set) before its own sqlite default —
-        # matching the old os.getenv("APP_DATABASE_URL", os.getenv("DATABASE_URL", ...)) chain.
+        # DATABASE_URL falls back to the local sqlite ERP db in dev.
         if not self.DATABASE_URL:
             self.DATABASE_URL = "sqlite:///./data/company.db"
 
+        # APP_DATABASE_URL must NOT fall back to DATABASE_URL: pointing the
+        # writable app connection at the read-only ERP DB would expose
+        # hr_admin_users (password hashes) and the audit log to the SQL agent.
+        # In production it must be set explicitly (guard below); in dev it
+        # falls back to its own separate sqlite file.
         if not self.APP_DATABASE_URL:
-            self.APP_DATABASE_URL = os.getenv("DATABASE_URL") or "sqlite:///./data/app.db"
+            self.APP_DATABASE_URL = "sqlite:///./data/app.db"
 
         if not self.SECRET_KEY:
             self.SECRET_KEY = secrets.token_hex(32)
 
-        # Fail fast on a missing/weak SECRET_KEY in production. Checked against
-        # the raw env var (not self.SECRET_KEY, which has already fallen back
-        # to a random value above) so the random-fallback case is still caught.
+        # Production guards. All keyed on DEBUG=false so local dev keeps its
+        # zero-config defaults while a misconfigured prod deploy fails fast at
+        # startup instead of silently running insecure. Raw env vars are checked
+        # (not the post-fallback self.* values) so fallbacks don't mask a
+        # missing setting.
         if not self.DEBUG:
             raw_secret_key = os.getenv("SECRET_KEY", "")
             if not raw_secret_key:
@@ -140,6 +144,33 @@ class Settings(BaseSettings):
                 raise RuntimeError(
                     "SECRET_KEY uses a known-weak placeholder value. "
                     "Run: export SECRET_KEY=$(openssl rand -hex 32)"
+                )
+
+            # ALLOW_UNAUTHENTICATED_QUERY removes all auth from /query and trusts
+            # the request-supplied slack_user_id to select an RBAC scope — a full
+            # data breach if enabled with a reachable endpoint. Dev-only.
+            if self.ALLOW_UNAUTHENTICATED_QUERY:
+                raise RuntimeError(
+                    "ALLOW_UNAUTHENTICATED_QUERY=true is not allowed when DEBUG is false: "
+                    "it disables /query authentication. Unset it in production."
+                )
+
+            # APP_DATABASE_URL must be set explicitly in production (see the
+            # no-fallback note above). Silently defaulting to a local sqlite file
+            # would split audit/users state per worker and lose it on redeploy.
+            if not os.getenv("APP_DATABASE_URL"):
+                raise RuntimeError(
+                    "APP_DATABASE_URL is not set. It must point at the writable app "
+                    "database explicitly in production (it does not fall back to "
+                    "DATABASE_URL)."
+                )
+
+            # A wildcard CORS origin should never ship to production; require an
+            # explicit allowlist.
+            if self.CORS_ALLOW_ORIGINS == ["*"]:
+                raise RuntimeError(
+                    "CORS_ALLOW_ORIGINS='*' is not allowed when DEBUG is false. "
+                    "Set an explicit comma-separated list of frontend origins."
                 )
 
         return self
