@@ -186,6 +186,7 @@ class LangGraphRuntime:
 
         sql_statements = list(collector.statements) if collector else []
         tables_accessed = ", ".join(sorted(collector.tables)) if collector else ""
+        rows_returned = collector.rows_returned if collector else 0
 
         logger.info(
             "langgraph_query_completed",
@@ -208,4 +209,5 @@ class LangGraphRuntime:
             sql_statements=sql_statements,
             tools_used=tools_used,
             model_name=_model_name(llm),
+            rows_returned=rows_returned,
         )

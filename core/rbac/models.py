@@ -95,8 +95,9 @@ class AuditLog(Base):
     """
     Append-only audit log for every query made through the HR agent (FR-6).
 
-    Rows are never updated or deleted — enforce this at the DB level by
-    revoking UPDATE/DELETE on this table from the app role.
+    Rows are never updated or deleted. On PostgreSQL this is enforced at the DB
+    level by a BEFORE UPDATE/DELETE trigger installed by the Alembic migration
+    (0002_audit_observability); the SQLAdmin panel also disables edit/delete.
 
     Schema
     ------
@@ -138,6 +139,13 @@ class AuditLog(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     total_tokens = Column(Integer, nullable=True)
+
+    # Observability (PR9) — populated by the LangGraph runtime; empty/0 under
+    # the legacy runtime.
+    tools_used = Column(String(500), nullable=True)  # comma-separated tool names
+    sql_statements = Column(Text, nullable=True)  # executed SQL (guard-rewritten)
+    model_name = Column(String(100), nullable=True)
+    rows_returned = Column(Integer, nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),

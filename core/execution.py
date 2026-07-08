@@ -21,7 +21,7 @@ from core.db import db_session
 from core.identity.resolver import resolve
 from core.rate_limit import enforce_rate_limit
 from core.runtimes import AgentRunRequest, AgentRunResult, get_runtime
-from core.telemetry.audit import write_audit
+from core.telemetry.audit import observability_fields, write_audit
 
 
 def run_query(
@@ -94,6 +94,7 @@ def run_query(
             prompt_tokens=result.prompt_tokens or None,
             completion_tokens=result.completion_tokens or None,
             total_tokens=result.total_tokens or None,
+            **observability_fields(result),
             **extra_audit,
         )
 

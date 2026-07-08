@@ -32,7 +32,7 @@ from core.identity.context import AgentContext
 from core.identity.resolver import lookup_hr_user
 from core.rate_limit import count_recent_queries
 from core.runtimes import AgentRunRequest, get_runtime
-from core.telemetry.audit import write_audit
+from core.telemetry.audit import observability_fields, write_audit
 
 logger = structlog.get_logger(__name__)
 
@@ -347,6 +347,7 @@ def process_event(
                 rate_check_ms=rate_check_ms,
                 history_fetch_ms=history_fetch_ms,
                 slack_post_ms=slack_post_ms,
+                **observability_fields(result),
             )
 
     except SlackApiError as exc:

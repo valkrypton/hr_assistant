@@ -7,9 +7,31 @@ passes the core latency/token fields; the Slack path additionally passes the
 Slack-specific timing breakdown. All fields beyond `question` are optional.
 """
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy.orm import Session
 
 from core.rbac.models import AuditLog
+
+if TYPE_CHECKING:
+    from core.runtimes.base import AgentRunResult
+
+# Cap stored SQL so a pathological run can't bloat the audit row.
+_SQL_MAX_CHARS = 4000
+
+
+def observability_fields(result: AgentRunResult) -> dict:
+    """Map an AgentRunResult's observability data to write_audit kwargs.
+
+    Empty under the legacy runtime; populated by the LangGraph runtime.
+    """
+    sql = "; ".join(result.sql_statements)[:_SQL_MAX_CHARS]
+    return {
+        "tools_used": ", ".join(result.tools_used) or None,
+        "sql_statements": sql or None,
+        "model_name": result.model_name or None,
+        "rows_returned": result.rows_returned or None,
+    }
 
 
 def write_audit(
@@ -32,6 +54,10 @@ def write_audit(
     rate_check_ms: int | None = None,
     history_fetch_ms: int | None = None,
     slack_post_ms: int | None = None,
+    tools_used: str | None = None,
+    sql_statements: str | None = None,
+    model_name: str | None = None,
+    rows_returned: int | None = None,
 ) -> None:
     """Append one row to the audit log in the app DB."""
     session.add(
@@ -53,6 +79,10 @@ def write_audit(
             rate_check_ms=rate_check_ms,
             history_fetch_ms=history_fetch_ms,
             slack_post_ms=slack_post_ms,
+            tools_used=tools_used,
+            sql_statements=sql_statements,
+            model_name=model_name,
+            rows_returned=rows_returned,
         )
     )
     session.commit()

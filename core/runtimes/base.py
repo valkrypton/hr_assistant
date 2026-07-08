@@ -33,6 +33,7 @@ class AgentRunResult:
     sql_statements: list[str] = field(default_factory=list)
     tools_used: list[str] = field(default_factory=list)
     model_name: str = ""
+    rows_returned: int = 0
 
 
 @runtime_checkable
