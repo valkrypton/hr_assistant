@@ -86,7 +86,9 @@ class RBACContext:
     @property
     def is_unrestricted(self) -> bool:
         """True for roles with company-wide access."""
-        return self.role in (Role.CTO_CEO, Role.HR_MANAGER)
+        from core.policies import can
+
+        return can(self.role, "data.scope.company")
 
     def scope_prompt(self) -> str:
         """
