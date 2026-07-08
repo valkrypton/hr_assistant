@@ -1,5 +1,73 @@
 # HR Agent — Refactoring & Security Review Plan
 
+## Implementation Progress
+
+Branch: `refactor/runtime-tools-security-hardening`. Full detail in
+`~/.claude/plans/glowing-mixing-twilight.md`. Suite: **353 passing**, ruff clean.
+
+**Decisions locked in:** migrate to LangGraph behind a runtime interface; keep the
+four existing roles (`cto_ceo`/`hr_manager`/`dept_head`/`team_lead`) and build a
+`policy.can()` layer on top; keep `core/`+`api/`+`adapters/` top-level (no rename
+to `hr_agent/`); a security audit ran first and its findings are folded into the
+PRs below.
+
+### Done
+
+- [x] **PR1 — Config/security guards + shared persistence helpers** (`6713dd1`)
+  - Moved `app_engine`/`erp_engine`/`db_session` → `core/db.py` and `write_audit`
+    → `core/telemetry/audit.py` (removes the Slack adapter's duplicated helpers).
+  - Audit #3: removed the `APP_DATABASE_URL → DATABASE_URL` cross-fallback.
+  - Audit #4/#7: fail-fast prod guards for `ALLOW_UNAUTHENTICATED_QUERY`, unset
+    `APP_DATABASE_URL`, and wildcard `CORS_ALLOW_ORIGINS` (all DEBUG-gated).
+- [x] **PR2 — Permission policy layer + SQL-guard hardening** (`9c9ff82`)
+  - `core/policies/` with `can(subject, action)` / `scope_for()`; re-expressed
+    `is_unrestricted` and the sql_guard role dispatch through it (byte-identical
+    predicates, proven by the 119 unchanged RBAC oracle tests).
+  - Audit #1 (CRITICAL): block SQL-executing/filesystem/DoS functions
+    (`query_to_xml*`, `dblink*`, `pg_read_file*`, `pg_sleep*`, …) for all roles.
+  - Audit #5: block `SELECT ... INTO`.
+- [x] **PR3 — Identity resolver + AgentContext** (`6e3f133`)
+  - `core/errors.py` (typed errors), `core/identity/` with `AgentContext`
+    (wraps RBACContext) and `resolve()`/`lookup_hr_user()` consolidating the
+    duplicated HRUser lookup.
+- [x] **PR4 — Runtime interface + execution pipeline** (`0450be5`)
+  - `core/runtimes/` (`AgentRuntime` protocol, `AgentRunRequest`/`Result`,
+    `LegacyRuntime`, `get_runtime()` on `AGENT_RUNTIME`, default `legacy`).
+  - `core/execution.run_query()` pipeline: rate-limit → identity → runtime →
+    redact → audit. Redaction moved out of `agent.query()` into the pipeline /
+    Slack orchestration (single enforcement point). `query_service` is now a
+    thin error→HTTP mapper.
+- [x] **PR5 — Tool registry + guarded SQL tool** (`88abdc8`, `eeab812`)
+  - `core/tools/`: `Tool` (enforces `required_permissions` in the tool layer),
+    `registry.for_context()`, and `query_erp_sql` (guarded free-form SQL on the
+    read-only ERP engine + `SqlCollector` telemetry). Additive; not yet on a
+    live path.
+
+### Remaining
+
+- [ ] **PR6 — LangGraph runtime** *(highest risk; default stays `legacy`)*
+  - `core/runtimes/langgraph/` via `langchain.agents.create_agent`; port the
+    prompt, ctx-bound tools (scope from context, never LLM args), `usage_metadata`
+    token counting; `scripts/compare_runtimes.py` golden harness over the 20
+    canonical queries. **Gate:** golden-query comparison needs a live LLM
+    provider and human review before PR7.
+- [ ] **PR7 — Cutover + legacy removal** — flip default to `langgraph`; delete
+  the legacy agent internals and `langchain-community`; add `test_architecture.py`
+  enforcing the import boundaries.
+- [ ] **PR8 — First typed tools** — `team_roster` (#8), `leave_lookup` (#12),
+  `joiners_summary` (#13/#14/#15).
+- [ ] **PR9 — Observability + audit integrity** — audit columns
+  (`tools_used`/`sql_statements`/`model_name`/`rows_returned`) via Alembic;
+  audit #6 append-only enforcement (REVOKE UPDATE/DELETE) + SQLAdmin review.
+- [ ] **PR10 — Test-gap closure, guardrails, docs** — mis-listed-table leak test,
+  Slack `event_id` dedupe (audit #8), doc + diagram updates.
+
+**Infra (not code), tracked alongside PR1:** provision a least-privilege
+read-only ERP DB role (SELECT-only on specific tables, no dangerous functions) —
+collapses audit #1/#3/#5 from exploitable to defense-in-depth.
+
+---
+
 ## Current principles that must remain
 
 Do not weaken these security guarantees:
