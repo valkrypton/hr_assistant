@@ -3,7 +3,7 @@
 ## Implementation Progress
 
 Branch: `refactor/runtime-tools-security-hardening`. Full detail in
-`~/.claude/plans/glowing-mixing-twilight.md`. Suite: **353 passing**, ruff clean.
+`~/.claude/plans/glowing-mixing-twilight.md`. Suite: **362 passing**, ruff clean.
 
 **Decisions locked in:** migrate to LangGraph behind a runtime interface; keep the
 four existing roles (`cto_ceo`/`hr_manager`/`dept_head`/`team_lead`) and build a
@@ -43,14 +43,17 @@ PRs below.
     read-only ERP engine + `SqlCollector` telemetry). Additive; not yet on a
     live path.
 
+- [x] **PR6 — LangGraph runtime** *(default stays `legacy`)* (`9efba64`, `f904344`)
+  - `core/runtimes/langgraph/` via `langchain.agents.create_agent`; ported prompt,
+    ctx-bound tools (scope from context, never LLM args), `usage_metadata` token
+    counting, `SqlCollector` telemetry, `hr_records` probed directly (fixes the
+    legacy restricted-role misreport). `scripts/compare_runtimes.py` golden harness
+    over the 20 canonical queries. Structurally verified with a fake tool-calling
+    model. **Still open:** run the golden comparison with a live LLM provider and
+    review it before flipping the default in PR7.
+
 ### Remaining
 
-- [ ] **PR6 — LangGraph runtime** *(highest risk; default stays `legacy`)*
-  - `core/runtimes/langgraph/` via `langchain.agents.create_agent`; port the
-    prompt, ctx-bound tools (scope from context, never LLM args), `usage_metadata`
-    token counting; `scripts/compare_runtimes.py` golden harness over the 20
-    canonical queries. **Gate:** golden-query comparison needs a live LLM
-    provider and human review before PR7.
 - [ ] **PR7 — Cutover + legacy removal** — flip default to `langgraph`; delete
   the legacy agent internals and `langchain-community`; add `test_architecture.py`
   enforcing the import boundaries.
