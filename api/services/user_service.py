@@ -1,6 +1,6 @@
 """Business logic for the /users routes — list/register/deregister HRUser."""
-import logging
 
+import structlog
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from api.schemas.users import UserCreate, UserResponse
 from core.rbac.models import HRUser
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def list_users(session: Session) -> list[UserResponse]:
@@ -40,8 +40,10 @@ def register_user(session: Session, body: UserCreate) -> UserResponse:
         session.refresh(user)
     except IntegrityError as exc:
         session.rollback()
-        logger.warning("User registration conflict: %s", exc)
-        raise HTTPException(status_code=409, detail="A user with this Slack user ID already exists.") from exc
+        logger.warning("user_registration_conflict", error=str(exc))
+        raise HTTPException(
+            status_code=409, detail="A user with this Slack user ID already exists."
+        ) from exc
     return UserResponse(
         id=user.id,
         employee_id=user.employee_id,

@@ -7,6 +7,11 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Test / coverage artifacts
+reports/
+.coverage
+htmlcov/
+
 # IDE
 .idea/
 .vscode/

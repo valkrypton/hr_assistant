@@ -3,10 +3,11 @@ SQLAdmin views — mounted on the FastAPI app in main.py.
 
 Add a new ModelView class here for each model that needs admin UI.
 """
+
 from sqladmin import ModelView
 from wtforms import SelectField
 
-from core.rbac.models import HRUser, AuditLog
+from core.rbac.models import AuditLog, HRUser
 from core.rbac.roles import Role
 
 _ROLE_CHOICES = [(r.value, r.value.replace("_", " ").title()) for r in Role]

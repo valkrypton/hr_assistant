@@ -1,0 +1,114 @@
+[project]
+name = "hr-assistant"
+version = "0.1.0"
+description = "Natural-language HR workforce assistant backed by an ERP PostgreSQL database, with RBAC and Slack integration."
+requires-python = ">=3.13"
+dependencies = [
+    # Core AI / LangChain
+    "langchain>=0.3",
+    "langchain-core>=0.3",
+    "langchain-community>=0.3",
+    "langchain-ollama>=0.2",       # Ollama provider
+    "langchain-openai>=0.2",       # OpenAI, xAI (Grok), QWEN (OpenAI-compatible)
+    "langchain-anthropic>=0.3",    # Anthropic / Claude
+
+    # Database
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",        # PostgreSQL driver
+
+    # Configuration
+    "python-dotenv>=1.0",
+    "pydantic-settings>=2.0",
+
+    # Schema migrations
+    "alembic>=1.13",
+
+    # Vector index (semantic search)
+    "chromadb>=0.5",
+    "langchain-chroma>=0.1",
+
+    # API layer
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.0",
+
+    # Structured logging
+    "structlog>=24.4",
+
+    # Admin panel
+    "sqladmin",
+    "itsdangerous",                # session cookie signing (SQLAdmin auth backend)
+
+    # Slack integration
+    "slack_sdk>=3.0",
+    "certifi",
+
+    # Admin authentication
+    "bcrypt>=4.0",
+
+    # SQL rewriting for RBAC scope enforcement
+    "sqlglot>=20.0,<31",
+]
+
+[dependency-groups]
+dev = [
+    # Pin ruff to a minor-version range so a major bump (with new format rules)
+    # is an explicit, reviewed upgrade rather than a silent `uv sync` side-effect.
+    # Keep this aligned with the `rev:` field in .pre-commit-config.yaml so the
+    # hook and `uv run ruff` never disagree on rules.
+    "ruff>=0.15,<0.16",
+    "pytest>=8.3.4",
+    "pytest-cov>=6.0.0",
+    "pytest-html>=4.1.1",
+    "pre-commit>=4.0.0",
+]
+
+[tool.uv]
+# This is an application, not a library — don't build/install it as a package
+# into its own venv, just manage the venv + dependencies.
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+# Committed, already-applied migrations are excluded from format/lint so a
+# future ruff bump can never reformat historical migration files (drift risk).
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = [
+    # `class Role(str, Enum)` is intentional, not an oversight: str(Role.X)
+    # behavior differs from `enum.StrEnum` in ways other code may depend on
+    # (e.g. `.value` access patterns used throughout core/rbac/). Don't
+    # auto-migrate without auditing every call site.
+    "UP042",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Long natural-language prompt/message strings, not code lines.
+"core/agent.py" = ["E501"]
+"core/rbac/context.py" = ["E501"]
+"adapters/slack.py" = ["E501"]
+# Ad-hoc scripts / seed data / SQL fixtures — long lines are data, not logic.
+"scripts/query_erp.py" = ["E501"]
+"scripts/seed_erp.py" = ["E501"]
+"tests/test_scope_execution.py" = ["E501"]
+
+[tool.pytest.ini_options]
+addopts = """
+ --cov
+ --cov-report html:reports/coverage/html
+ --cov-report xml:reports/coverage/coverage.xml
+ --html=reports/unittests/html/index.html
+ --junitxml=reports/unittests/junit.xml
+"""
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["core", "api", "adapters"]
+
+[tool.coverage.report]
+exclude_lines = ["if TYPE_CHECKING:"]
+show_missing = true

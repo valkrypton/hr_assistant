@@ -9,7 +9,8 @@ Tables
 hr_assistant_users   — registered users with roles and Slack identity
 hr_assistant_audit   — append-only query audit log (FR-6)
 """
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
@@ -33,6 +34,7 @@ class AdminUser(Base):
     Separate from HRUser — HR users query the bot, admin users manage it.
     Create via: python scripts/create_admin.py <username>
     """
+
     __tablename__ = "hr_admin_users"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -42,7 +44,7 @@ class AdminUser(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
     def __repr__(self) -> str:
@@ -51,9 +53,7 @@ class AdminUser(Base):
 
 class HRUser(Base):
     __tablename__ = "hr_assistant_users"
-    __table_args__ = (
-        UniqueConstraint("slack_user_id", name="uq_hr_user_slack"),
-    )
+    __table_args__ = (UniqueConstraint("slack_user_id", name="uq_hr_user_slack"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
@@ -75,13 +75,13 @@ class HRUser(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     def __repr__(self) -> str:
@@ -111,6 +111,7 @@ class AuditLog(Base):
       error            TEXT                   -- populated if query raised an exception
       created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
     """
+
     __tablename__ = "hr_assistant_audit"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -125,13 +126,13 @@ class AuditLog(Base):
     error = Column(Text, nullable=True)
 
     # Latency breakdown in milliseconds
-    schema_rag_ms = Column(Integer, nullable=True)    # schema file read
-    agent_ms = Column(Integer, nullable=True)          # LLM + SQL execution
-    total_ms = Column(Integer, nullable=True)          # full agent round-trip
-    user_lookup_ms = Column(Integer, nullable=True)    # HR user DB lookup
-    rate_check_ms = Column(Integer, nullable=True)     # rate limit DB query
+    schema_rag_ms = Column(Integer, nullable=True)  # schema file read
+    agent_ms = Column(Integer, nullable=True)  # LLM + SQL execution
+    total_ms = Column(Integer, nullable=True)  # full agent round-trip
+    user_lookup_ms = Column(Integer, nullable=True)  # HR user DB lookup
+    rate_check_ms = Column(Integer, nullable=True)  # rate limit DB query
     history_fetch_ms = Column(Integer, nullable=True)  # Slack thread history API call
-    slack_post_ms = Column(Integer, nullable=True)     # chat_postMessage
+    slack_post_ms = Column(Integer, nullable=True)  # chat_postMessage
 
     # Token usage (Phase 4)
     prompt_tokens = Column(Integer, nullable=True)
@@ -141,7 +142,7 @@ class AuditLog(Base):
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
     def __repr__(self) -> str:

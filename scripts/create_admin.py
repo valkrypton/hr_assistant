@@ -6,6 +6,7 @@ Usage:
     python scripts/create_admin.py --list              # list all admins
     python scripts/create_admin.py --deactivate <username>  # revoke access
 """
+
 import argparse
 import getpass
 import sys
@@ -14,14 +15,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
-import sqlalchemy
-from sqlalchemy.orm import Session
+import sqlalchemy  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
 
-from core.auth import hash_password
-from core.config import settings
-from core.rbac.models import AdminUser, Base
+from core.auth import hash_password  # noqa: E402
+from core.config import settings  # noqa: E402
+from core.rbac.models import AdminUser, Base  # noqa: E402
 
 
 def _engine():

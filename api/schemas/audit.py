@@ -1,21 +1,19 @@
-from typing import Optional
-
 from pydantic import BaseModel
 
 
 class AuditLogResponse(BaseModel):
     id: int
     created_at: str
-    slack_user_id: Optional[str]
-    employee_id: Optional[int]
-    role: Optional[str]
+    slack_user_id: str | None
+    employee_id: int | None
+    role: str | None
     question: str
-    answer: Optional[str]
-    tables_accessed: Optional[str]
-    error: Optional[str]
-    schema_rag_ms: Optional[int]
-    agent_ms: Optional[int]
-    total_ms: Optional[int]
-    prompt_tokens: Optional[int]
-    completion_tokens: Optional[int]
-    total_tokens: Optional[int]
+    answer: str | None
+    tables_accessed: str | None
+    error: str | None
+    schema_rag_ms: int | None
+    agent_ms: int | None
+    total_ms: int | None
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None

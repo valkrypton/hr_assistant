@@ -1,11 +1,9 @@
-from typing import Optional
-
 from pydantic import BaseModel
 
 
 class QueryRequest(BaseModel):
     query: str
-    slack_user_id: Optional[str] = None
+    slack_user_id: str | None = None
 
 
 class QueryResponse(BaseModel):

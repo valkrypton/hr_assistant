@@ -9,7 +9,8 @@ adapters, never the reverse).
 This module only counts — deciding what to do with the count (raise an
 HTTPException vs. post a Slack message) stays with each caller.
 """
-from datetime import datetime, timedelta, timezone
+
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -18,7 +19,7 @@ from core.rbac.models import AuditLog
 
 def count_recent_queries(session: Session, slack_user_id: str) -> int:
     """Return how many AuditLog rows slack_user_id has in the last hour."""
-    since = datetime.now(timezone.utc) - timedelta(hours=1)
+    since = datetime.now(UTC) - timedelta(hours=1)
     return (
         session.query(AuditLog)
         .filter(

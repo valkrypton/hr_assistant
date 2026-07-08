@@ -4,9 +4,11 @@ Shared dependencies for the API layer.
 Provides engine factories, the DB-session dependency, and the audit-log
 writer used across multiple routes.
 """
+
+from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import lru_cache
-from typing import Annotated, Iterator, Optional
+from typing import Annotated
 
 import sqlalchemy
 from fastapi import Depends, HTTPException, Security
@@ -26,7 +28,7 @@ def _dummy_hash() -> str:
     return hash_password("timing-guard-placeholder")
 
 
-def require_admin(credentials: Optional[HTTPBasicCredentials] = Security(_basic_auth)) -> AdminUser:
+def require_admin(credentials: HTTPBasicCredentials | None = Security(_basic_auth)) -> AdminUser:
     """FastAPI dependency — HTTP Basic Auth checked against the AdminUser table."""
     if not credentials:
         raise HTTPException(
@@ -35,8 +37,13 @@ def require_admin(credentials: Optional[HTTPBasicCredentials] = Security(_basic_
             headers={"WWW-Authenticate": "Basic"},
         )
     with Session(app_engine()) as session:
-        admin = session.query(AdminUser).filter_by(username=credentials.username, is_active=True).first()
-    # Always run verify_password (even for unknown users) to prevent timing-based username enumeration.
+        admin = (
+            session.query(AdminUser)
+            .filter_by(username=credentials.username, is_active=True)
+            .first()
+        )
+    # Always run verify_password (even for unknown users) to prevent
+    # timing-based username enumeration.
     candidate_hash = admin.hashed_password if admin else _dummy_hash()
     password_ok = verify_password(credentials.password, candidate_hash)
     if not admin or not password_ok:
@@ -49,8 +56,8 @@ def require_admin(credentials: Optional[HTTPBasicCredentials] = Security(_basic_
 
 
 def require_admin_unless_open(
-    credentials: Optional[HTTPBasicCredentials] = Security(_basic_auth),
-) -> Optional[AdminUser]:
+    credentials: HTTPBasicCredentials | None = Security(_basic_auth),
+) -> AdminUser | None:
     """
     /query guard. slack_user_id in the request body selects an RBAC scope but
     is NOT proof of identity (Slack IDs are public within a workspace), so the
@@ -115,34 +122,36 @@ def check_rate_limit(session: Session, slack_user_id: str) -> None:
 def write_audit(
     session: Session,
     *,
-    slack_user_id: Optional[str],
-    employee_id: Optional[int],
-    role: Optional[str],
+    slack_user_id: str | None,
+    employee_id: int | None,
+    role: str | None,
     question: str,
-    answer: Optional[str] = None,
-    tables_accessed: Optional[str] = None,
-    error: Optional[str] = None,
-    schema_rag_ms: Optional[int] = None,
-    agent_ms: Optional[int] = None,
-    total_ms: Optional[int] = None,
-    prompt_tokens: Optional[int] = None,
-    completion_tokens: Optional[int] = None,
-    total_tokens: Optional[int] = None,
+    answer: str | None = None,
+    tables_accessed: str | None = None,
+    error: str | None = None,
+    schema_rag_ms: int | None = None,
+    agent_ms: int | None = None,
+    total_ms: int | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    total_tokens: int | None = None,
 ) -> None:
     """Append one row to the audit log in the app DB (FR-6.1 / FR-6.2)."""
-    session.add(AuditLog(
-        slack_user_id=slack_user_id,
-        employee_id=employee_id,
-        role=role,
-        question=question,
-        answer=answer,
-        tables_accessed=tables_accessed,
-        error=error,
-        schema_rag_ms=schema_rag_ms,
-        agent_ms=agent_ms,
-        total_ms=total_ms,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
-    ))
+    session.add(
+        AuditLog(
+            slack_user_id=slack_user_id,
+            employee_id=employee_id,
+            role=role,
+            question=question,
+            answer=answer,
+            tables_accessed=tables_accessed,
+            error=error,
+            schema_rag_ms=schema_rag_ms,
+            agent_ms=agent_ms,
+            total_ms=total_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
+    )
     session.commit()

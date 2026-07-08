@@ -17,11 +17,12 @@ Forbidden columns (FR-5.8 — never exposed regardless of role):
     date of birth.  These are injected into the agent prompt so the LLM refuses
     to include them in any response.
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from core.rbac.roles import Role
 
@@ -30,40 +31,42 @@ if TYPE_CHECKING:
 
 
 # Columns that must never appear in any agent response, regardless of role.
-FORBIDDEN_COLUMNS: frozenset[str] = frozenset({
-    "salary",
-    "basic_salary",
-    "gross_salary",
-    "net_salary",
-    "compensation",
-    "nic",
-    "cnic",
-    "bank_account",
-    "bank_details",
-    "home_address",
-    "personal_address",
-    "personal_phone",
-    "personal_email",
-    "date_of_birth",
-    "dob",
-    "passport_number",
-    "medical_record",
-})
+FORBIDDEN_COLUMNS: frozenset[str] = frozenset(
+    {
+        "salary",
+        "basic_salary",
+        "gross_salary",
+        "net_salary",
+        "compensation",
+        "nic",
+        "cnic",
+        "bank_account",
+        "bank_details",
+        "home_address",
+        "personal_address",
+        "personal_phone",
+        "personal_email",
+        "date_of_birth",
+        "dob",
+        "passport_number",
+        "medical_record",
+    }
+)
 
 
 @dataclass(frozen=True)
 class RBACContext:
     role: Role
-    employee_id: Optional[int] = None  # the requester's own person.id
-    department_id: Optional[int] = None  # set for DEPT_HEAD
-    team_id: Optional[int] = None  # set for TEAM_LEAD
+    employee_id: int | None = None  # the requester's own person.id
+    department_id: int | None = None  # set for DEPT_HEAD
+    team_id: int | None = None  # set for TEAM_LEAD
 
     # ------------------------------------------------------------------
     # Factory
     # ------------------------------------------------------------------
 
     @classmethod
-    def for_user(cls, user: "HRUser") -> "RBACContext":
+    def for_user(cls, user: HRUser) -> RBACContext:
         return cls(
             role=Role(user.role),
             employee_id=user.employee_id,
@@ -72,7 +75,7 @@ class RBACContext:
         )
 
     @classmethod
-    def superuser(cls) -> "RBACContext":
+    def superuser(cls) -> RBACContext:
         """Convenience context for CTO/CEO — full access, used in tests."""
         return cls(role=Role.CTO_CEO)
 
@@ -107,7 +110,7 @@ class RBACContext:
                     + f"DATA SCOPE: you ONLY have access to department_id = {self.department_id}.\n"
                     f"- Every query MUST include a WHERE or JOIN condition restricting results to department_id = {self.department_id}.\n"
                     f"- If the question asks about any other department or team outside your department, "
-                    f"respond ONLY with: \"You don't have access to data outside your department.\"\n"
+                    f'respond ONLY with: "You don\'t have access to data outside your department."\n'
                     f"- Never query or return employee data from any other department.\n"
                 )
             # Misconfigured — degrade to no access rather than full access.
@@ -116,13 +119,12 @@ class RBACContext:
         if self.role == Role.TEAM_LEAD:
             if self.team_id:
                 return (
-                    base
-                    + f"DATA SCOPE: you ONLY have access to team.id = {self.team_id} "
+                    base + f"DATA SCOPE: you ONLY have access to team.id = {self.team_id} "
                     f"(via person_team.nsubteam_id = {self.team_id}).\n"
                     f"- Every query MUST include a JOIN to person_team WHERE nsubteam_id = {self.team_id} "
                     f"AND end_date IS NULL AND is_active = true.\n"
                     f"- If the question asks about any other team or employees outside your team, "
-                    f"respond ONLY with: \"You don't have access to data outside your team.\"\n"
+                    f'respond ONLY with: "You don\'t have access to data outside your team."\n'
                     f"- Never query or return employee data for any other team "
                     f"(person_team.nsubteam_id / team.id).\n"
                 )
@@ -130,7 +132,7 @@ class RBACContext:
 
         return base + "DATA SCOPE: unknown or unsupported role — return no employee data.\n"
 
-    def can_see_employee(self, dept_id: Optional[int], team_id: Optional[int]) -> bool:
+    def can_see_employee(self, dept_id: int | None, team_id: int | None) -> bool:
         """
         Post-query check: can this user see a result row belonging to the given
         department/team?  Used to filter rows after the agent returns results.
@@ -154,10 +156,7 @@ class RBACContext:
         """
         lower = text.lower()
         # Check with word boundaries to avoid partial matches (e.g. "nic" inside "cnic").
-        found = [
-            col for col in FORBIDDEN_COLUMNS
-            if re.search(rf"\b{re.escape(col)}\b", lower)
-        ]
+        found = [col for col in FORBIDDEN_COLUMNS if re.search(rf"\b{re.escape(col)}\b", lower)]
         if not found:
             return text
 

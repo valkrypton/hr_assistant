@@ -17,10 +17,11 @@ other line of _build_agent (SQLDatabase construction, wrapping db.run) runs
 for real, against a throwaway sqlite file. No network and no real LLM call
 is involved.
 """
+
 import sqlite3
+from unittest.mock import patch
 
 import pytest
-from unittest.mock import patch
 
 
 @pytest.fixture()
@@ -47,16 +48,18 @@ def _build_scoped_db(sqlite_db_url):
     `_rewrite` is a closure-local bound at _build_agent call time, not a
     patchable core.agent module attribute.
     """
-    from core.config import settings
     import core.agent as agent_mod
+    from core.config import settings
 
     def _fake_create_sql_agent(llm, db, **kwargs):
         return db
 
-    with patch.object(settings, "INCLUDED_TABLES", ["person"]), \
-         patch.object(settings, "DATABASE_URL", sqlite_db_url), \
-         patch("core.agent.get_llm", return_value=object()), \
-         patch("core.agent.create_sql_agent", side_effect=_fake_create_sql_agent):
+    with (
+        patch.object(settings, "INCLUDED_TABLES", ["person"]),
+        patch.object(settings, "DATABASE_URL", sqlite_db_url),
+        patch("core.agent.get_llm", return_value=object()),
+        patch("core.agent.create_sql_agent", side_effect=_fake_create_sql_agent),
+    ):
         return agent_mod._build_agent(None)
 
 

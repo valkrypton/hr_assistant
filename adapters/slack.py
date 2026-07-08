@@ -15,15 +15,15 @@ Slack expects an HTTP 200 within 3 seconds of delivering an event.  The agent
 can take up to 15 seconds.  The FastAPI route acks immediately and offloads the
 actual work to a BackgroundTask so the connection closes before the agent runs.
 """
+
 from __future__ import annotations
 
 import hashlib
 import hmac
-import logging
 import time
 from contextlib import contextmanager
-from typing import Optional
 
+import structlog
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from sqlalchemy.orm import Session
@@ -34,11 +34,12 @@ from core.rate_limit import count_recent_queries
 from core.rbac.context import RBACContext
 from core.rbac.models import AuditLog, HRUser
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Signature verification  (FR-7.1, security)
 # ---------------------------------------------------------------------------
+
 
 def verify_signature(
     signing_secret: str,
@@ -64,11 +65,14 @@ def verify_signature(
         return False
 
     base = f"v0:{request_timestamp}:{decoded_body}"
-    expected = "v0=" + hmac.new(
-        signing_secret.encode("utf-8"),
-        base.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
+    expected = (
+        "v0="
+        + hmac.new(
+            signing_secret.encode("utf-8"),
+            base.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+    )
 
     return hmac.compare_digest(expected, slack_signature)
 
@@ -76,6 +80,7 @@ def verify_signature(
 # ---------------------------------------------------------------------------
 # Block Kit formatter
 # ---------------------------------------------------------------------------
+
 
 def _format_blocks(answer: str) -> list[dict]:
     """
@@ -115,12 +120,15 @@ def _format_blocks(answer: str) -> list[dict]:
 # DB helpers  (import-time engine avoidance — use the app engine lazily)
 # ---------------------------------------------------------------------------
 
+
 def _get_app_engine():
     import sqlalchemy
+
     global _app_engine
     if _app_engine is None:
         _app_engine = sqlalchemy.create_engine(settings.APP_DATABASE_URL)
     return _app_engine
+
 
 _app_engine = None
 
@@ -136,54 +144,52 @@ def _db_session():
         yield session
 
 
-def _lookup_user(session: Session, slack_user_id: str) -> Optional[HRUser]:
-    return (
-        session.query(HRUser)
-        .filter_by(slack_user_id=slack_user_id, is_active=True)
-        .first()
-    )
+def _lookup_user(session: Session, slack_user_id: str) -> HRUser | None:
+    return session.query(HRUser).filter_by(slack_user_id=slack_user_id, is_active=True).first()
 
 
 def _write_audit(
     session: Session,
     *,
     slack_user_id: str,
-    employee_id: Optional[int],
-    role: Optional[str],
+    employee_id: int | None,
+    role: str | None,
     question: str,
-    answer: Optional[str] = None,
-    tables_accessed: Optional[str] = None,
-    error: Optional[str] = None,
-    schema_rag_ms: Optional[int] = None,
-    agent_ms: Optional[int] = None,
-    total_ms: Optional[int] = None,
-    prompt_tokens: Optional[int] = None,
-    completion_tokens: Optional[int] = None,
-    total_tokens: Optional[int] = None,
-    user_lookup_ms: Optional[int] = None,
-    rate_check_ms: Optional[int] = None,
-    history_fetch_ms: Optional[int] = None,
-    slack_post_ms: Optional[int] = None,
+    answer: str | None = None,
+    tables_accessed: str | None = None,
+    error: str | None = None,
+    schema_rag_ms: int | None = None,
+    agent_ms: int | None = None,
+    total_ms: int | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    total_tokens: int | None = None,
+    user_lookup_ms: int | None = None,
+    rate_check_ms: int | None = None,
+    history_fetch_ms: int | None = None,
+    slack_post_ms: int | None = None,
 ) -> None:
-    session.add(AuditLog(
-        slack_user_id=slack_user_id,
-        employee_id=employee_id,
-        role=role,
-        question=question,
-        answer=answer,
-        tables_accessed=tables_accessed,
-        error=error,
-        schema_rag_ms=schema_rag_ms,
-        agent_ms=agent_ms,
-        total_ms=total_ms,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
-        user_lookup_ms=user_lookup_ms,
-        rate_check_ms=rate_check_ms,
-        history_fetch_ms=history_fetch_ms,
-        slack_post_ms=slack_post_ms,
-    ))
+    session.add(
+        AuditLog(
+            slack_user_id=slack_user_id,
+            employee_id=employee_id,
+            role=role,
+            question=question,
+            answer=answer,
+            tables_accessed=tables_accessed,
+            error=error,
+            schema_rag_ms=schema_rag_ms,
+            agent_ms=agent_ms,
+            total_ms=total_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            user_lookup_ms=user_lookup_ms,
+            rate_check_ms=rate_check_ms,
+            history_fetch_ms=history_fetch_ms,
+            slack_post_ms=slack_post_ms,
+        )
+    )
     session.commit()
 
 
@@ -198,7 +204,7 @@ def _fetch_thread_history(
     client: WebClient,
     channel: str,
     thread_ts: str,
-    bot_user_id: Optional[str],
+    bot_user_id: str | None,
     current_ts: str,
     requester_user_id: str,
     is_dm: bool,
@@ -230,7 +236,7 @@ def _fetch_thread_history(
         resp = client.conversations_replies(**kwargs)
         messages = resp.get("messages", [])
     except Exception as exc:
-        logger.warning("Failed to fetch thread history: %s", exc)
+        logger.warning("thread_history_fetch_failed", error=str(exc))
         return []
 
     history: list[dict] = []
@@ -261,6 +267,7 @@ def _fetch_thread_history(
 # Core event processor  (runs in background — outside the 3-second window)
 # ---------------------------------------------------------------------------
 
+
 def process_event(
     slack_user_id: str,
     text: str,
@@ -281,7 +288,10 @@ def process_event(
     This function is intentionally synchronous so it can be called from a
     FastAPI BackgroundTask without requiring an event loop.
     """
-    import ssl, certifi
+    import ssl
+
+    import certifi
+
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     client = WebClient(token=settings.SLACK_BOT_TOKEN, ssl=ssl_ctx)
 
@@ -302,7 +312,7 @@ def process_event(
             rate_check_ms = int((time.monotonic() - t_rate) * 1000)
 
     if not hr_user:
-        logger.warning("Slack user %s is not registered in hr_assistant_users.", slack_user_id)
+        logger.warning("slack_user_not_registered", slack_user_id=slack_user_id)
         try:
             client.chat_postMessage(
                 channel=channel,
@@ -314,7 +324,7 @@ def process_event(
         return
 
     if not hr_user.role:
-        logger.warning("Slack user %s has no role assigned.", slack_user_id)
+        logger.warning("slack_user_missing_role", slack_user_id=slack_user_id)
         try:
             client.chat_postMessage(
                 channel=channel,
@@ -363,7 +373,9 @@ def process_event(
     history_fetch_ms = int((time.monotonic() - t_history) * 1000)
 
     try:
-        result = agent_query(text, rbac_ctx=rbac_ctx, conversation_history=conversation_history or None)
+        result = agent_query(
+            text, rbac_ctx=rbac_ctx, conversation_history=conversation_history or None
+        )
 
         t_post = time.monotonic()
         client.chat_postMessage(
@@ -375,10 +387,13 @@ def process_event(
         slack_post_ms = int((time.monotonic() - t_post) * 1000)
 
         logger.info(
-            "process_event timing — user_lookup=%dms  rate_check=%dms  history=%dms"
-            "  agent=%dms  slack_post=%dms  total_agent_ms=%dms",
-            user_lookup_ms, rate_check_ms, history_fetch_ms,
-            result.agent_ms, slack_post_ms, result.total_ms,
+            "process_event_timing",
+            user_lookup_ms=user_lookup_ms,
+            rate_check_ms=rate_check_ms,
+            history_fetch_ms=history_fetch_ms,
+            agent_ms=result.agent_ms,
+            slack_post_ms=slack_post_ms,
+            total_agent_ms=result.total_ms,
         )
 
         with _db_session() as session:
@@ -403,9 +418,9 @@ def process_event(
             )
 
     except SlackApiError as exc:
-        logger.error("Slack API error posting reply: %s", exc.response["error"])
+        logger.error("slack_api_error_posting_reply", error=exc.response["error"])
     except Exception as exc:
-        logger.exception("Error processing Slack event for user %s", slack_user_id)
+        logger.exception("slack_event_processing_failed", slack_user_id=slack_user_id)
         with _db_session() as session:
             _write_audit(
                 session,

@@ -13,16 +13,19 @@ These tests cover:
 
 No database or LLM is involved — all pure unit tests.
 """
+
+from datetime import UTC
+
 import pytest
 
-from core.rbac.roles import Role
-from core.rbac.context import RBACContext, FORBIDDEN_COLUMNS
+from core.rbac.context import FORBIDDEN_COLUMNS, RBACContext
 from core.rbac.models import HRUser
-
+from core.rbac.roles import Role
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_ctx(role: Role, dept_id=None, team_id=None, emp_id=1) -> RBACContext:
     return RBACContext(role=role, employee_id=emp_id, department_id=dept_id, team_id=team_id)
@@ -31,6 +34,7 @@ def make_ctx(role: Role, dept_id=None, team_id=None, emp_id=1) -> RBACContext:
 # ---------------------------------------------------------------------------
 # FR-5.3 / FR-5.4  CTO/CEO and HR Manager — unrestricted
 # ---------------------------------------------------------------------------
+
 
 class TestUnrestrictedRoles:
     @pytest.mark.parametrize("role", [Role.CTO_CEO, Role.HR_MANAGER])
@@ -58,6 +62,7 @@ class TestUnrestrictedRoles:
 # ---------------------------------------------------------------------------
 # FR-5.5  Department Head — own department only
 # ---------------------------------------------------------------------------
+
 
 class TestDeptHead:
     def test_is_restricted(self):
@@ -89,6 +94,7 @@ class TestDeptHead:
 # ---------------------------------------------------------------------------
 # FR-5.6  Team Lead — own team only
 # ---------------------------------------------------------------------------
+
 
 class TestTeamLead:
     def test_is_restricted(self):
@@ -122,19 +128,33 @@ class TestTeamLead:
 # FR-5.8  Forbidden columns — present in every role's scope prompt
 # ---------------------------------------------------------------------------
 
+
 class TestForbiddenColumns:
-    @pytest.mark.parametrize("role,dept,team", [
-        (Role.CTO_CEO, None, None),
-        (Role.HR_MANAGER, None, None),
-        (Role.DEPT_HEAD, 1, None),
-        (Role.TEAM_LEAD, None, 1),
-    ])
+    @pytest.mark.parametrize(
+        "role,dept,team",
+        [
+            (Role.CTO_CEO, None, None),
+            (Role.HR_MANAGER, None, None),
+            (Role.DEPT_HEAD, 1, None),
+            (Role.TEAM_LEAD, None, 1),
+        ],
+    )
     def test_forbidden_columns_in_every_prompt(self, role, dept, team):
         prompt = make_ctx(role, dept_id=dept, team_id=team).scope_prompt()
         assert "FORBIDDEN COLUMNS" in prompt
 
-    @pytest.mark.parametrize("col", ["salary", "nic", "bank_account", "date_of_birth",
-                                      "personal_phone", "personal_email", "home_address"])
+    @pytest.mark.parametrize(
+        "col",
+        [
+            "salary",
+            "nic",
+            "bank_account",
+            "date_of_birth",
+            "personal_phone",
+            "personal_email",
+            "home_address",
+        ],
+    )
     def test_key_sensitive_columns_in_forbidden_set(self, col):
         assert col in FORBIDDEN_COLUMNS
 
@@ -146,6 +166,7 @@ class TestForbiddenColumns:
 # ---------------------------------------------------------------------------
 # strip_forbidden() — defence-in-depth redaction
 # ---------------------------------------------------------------------------
+
 
 class TestStripForbidden:
     def setup_method(self):
@@ -182,6 +203,7 @@ class TestStripForbidden:
 # can_see_employee() — post-query row visibility
 # ---------------------------------------------------------------------------
 
+
 class TestCanSeeEmployee:
     def test_cto_sees_any_employee(self):
         ctx = make_ctx(Role.CTO_CEO)
@@ -211,6 +233,7 @@ class TestCanSeeEmployee:
 # ---------------------------------------------------------------------------
 # for_user() factory
 # ---------------------------------------------------------------------------
+
 
 class TestForUserFactory:
     def _make_hr_user(self, role, dept_id=None, team_id=None, emp_id=42):
@@ -248,30 +271,34 @@ class TestForUserFactory:
 # Agent prefix template renders without error (smoke test)
 # ---------------------------------------------------------------------------
 
+
 class TestAgentPrefixRendering:
-    @pytest.mark.parametrize("role,dept,team", [
-        (Role.CTO_CEO, None, None),
-        (Role.HR_MANAGER, None, None),
-        (Role.DEPT_HEAD, 3, None),
-        (Role.TEAM_LEAD, None, 7),
-    ])
+    @pytest.mark.parametrize(
+        "role,dept,team",
+        [
+            (Role.CTO_CEO, None, None),
+            (Role.HR_MANAGER, None, None),
+            (Role.DEPT_HEAD, 3, None),
+            (Role.TEAM_LEAD, None, 7),
+        ],
+    )
     def test_prefix_renders_for_all_roles(self, role, dept, team):
-        from core.agent import _BASE_PREFIX, _UNRESTRICTED_RBAC, _RESTRICTED_RBAC
+        from core.agent import _BASE_PREFIX, _RESTRICTED_RBAC, _UNRESTRICTED_RBAC
+
         ctx = make_ctx(role, dept_id=dept, team_id=team)
 
         if ctx.is_unrestricted:
             rbac_prefix = _UNRESTRICTED_RBAC
         else:
             scope_lines = ctx.scope_prompt().splitlines()
-            scope_description = "\n".join(
-                ln for ln in scope_lines if ln.startswith("DATA SCOPE")
-            )
+            scope_description = "\n".join(ln for ln in scope_lines if ln.startswith("DATA SCOPE"))
             rbac_prefix = _RESTRICTED_RBAC.format(
                 role=ctx.role.value.upper().replace("_", " "),
                 scope_description=scope_description,
             )
 
         from core.agent import _forbidden_columns_str
+
         prefix = _BASE_PREFIX.format(
             forbidden_columns=_forbidden_columns_str(),
             rbac_prefix=rbac_prefix,
@@ -279,13 +306,14 @@ class TestAgentPrefixRendering:
         )
         assert len(prefix) > 100
         assert "PRIVACY" in prefix
-        assert "salary" in prefix           # at least one forbidden column rendered
+        assert "salary" in prefix  # at least one forbidden column rendered
         assert "SELECT" in prefix
 
 
 # ---------------------------------------------------------------------------
 # sql_guard.rewrite_sql() — DB-layer scope enforcement
 # ---------------------------------------------------------------------------
+
 
 class TestSQLGuard:
     """
@@ -295,6 +323,7 @@ class TestSQLGuard:
 
     def setup_method(self):
         from core.rbac.sql_guard import rewrite_sql
+
         self.rewrite = rewrite_sql
 
     # --- unrestricted roles: no scope injection, SELECT allowed ---
@@ -389,23 +418,29 @@ class TestSQLGuard:
 
     # --- non-SELECT rejection (all roles, all statement types) ---
 
-    @pytest.mark.parametrize("role,kwargs", [
-        (Role.DEPT_HEAD,  {"dept_id": 3}),
-        (Role.TEAM_LEAD,  {"team_id": 7}),
-        (Role.HR_MANAGER, {}),
-        (Role.CTO_CEO,    {}),
-    ])
-    @pytest.mark.parametrize("sql", [
-        "INSERT INTO person (full_name) VALUES ('x')",
-        "UPDATE person SET status_id = 11 WHERE id = 1",
-        "DELETE FROM person WHERE id = 1",
-        "DROP TABLE person",
-        "TRUNCATE TABLE person",
-        "ALTER TABLE person ADD COLUMN foo TEXT",
-        "CREATE TABLE shadow AS SELECT * FROM person",
-        "GRANT SELECT ON person TO attacker",
-        "REVOKE SELECT ON person FROM hr_user",
-    ])
+    @pytest.mark.parametrize(
+        "role,kwargs",
+        [
+            (Role.DEPT_HEAD, {"dept_id": 3}),
+            (Role.TEAM_LEAD, {"team_id": 7}),
+            (Role.HR_MANAGER, {}),
+            (Role.CTO_CEO, {}),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO person (full_name) VALUES ('x')",
+            "UPDATE person SET status_id = 11 WHERE id = 1",
+            "DELETE FROM person WHERE id = 1",
+            "DROP TABLE person",
+            "TRUNCATE TABLE person",
+            "ALTER TABLE person ADD COLUMN foo TEXT",
+            "CREATE TABLE shadow AS SELECT * FROM person",
+            "GRANT SELECT ON person TO attacker",
+            "REVOKE SELECT ON person FROM hr_user",
+        ],
+    )
     def test_non_select_blocked_for_all_roles(self, role, kwargs, sql):
         ctx = make_ctx(role, **kwargs)
         with pytest.raises(ValueError, match="Non-SELECT"):
@@ -430,6 +465,7 @@ class TestSQLGuard:
 # Negative RBAC tests — boundary violations and bypass attempts
 # ---------------------------------------------------------------------------
 
+
 class TestNegativeRBAC:
     """
     Tests that verify access is DENIED or RESTRICTED in cases where it should
@@ -438,6 +474,7 @@ class TestNegativeRBAC:
 
     def setup_method(self):
         from core.rbac.sql_guard import rewrite_sql
+
         self.rewrite = rewrite_sql
 
     # --- scope prompt must not grant unrestricted access to restricted roles ---
@@ -557,6 +594,7 @@ class TestNegativeRBAC:
 # sql_guard — person-linked tables scoped without a person join
 # ---------------------------------------------------------------------------
 
+
 class TestPersonLinkedTableScope:
     """
     Restricted roles must not read company-wide data through tables that
@@ -566,13 +604,22 @@ class TestPersonLinkedTableScope:
 
     def setup_method(self):
         from core.rbac.sql_guard import rewrite_sql
+
         self.rewrite = rewrite_sql
 
-    @pytest.mark.parametrize("table", [
-        "leave_record", "person_team", "person_week_log", "person_competency",
-        "person_skill_category", "users_personresignation",
-        "core_personstatushistory", "core_personemploymenthistory",
-    ])
+    @pytest.mark.parametrize(
+        "table",
+        [
+            "leave_record",
+            "person_team",
+            "person_week_log",
+            "person_competency",
+            "person_skill_category",
+            "users_personresignation",
+            "core_personstatushistory",
+            "core_personemploymenthistory",
+        ],
+    )
     def test_dept_head_person_fk_tables_scoped(self, table):
         ctx = make_ctx(Role.DEPT_HEAD, dept_id=3)
         result = self.rewrite(f"SELECT id FROM {table}", ctx)
@@ -666,6 +713,7 @@ class TestPersonLinkedTableScope:
 # sql_guard — forbidden columns blocked at the SQL layer (FR-5.8)
 # ---------------------------------------------------------------------------
 
+
 class TestForbiddenColumnsSQLGuard:
     """
     Forbidden columns (salary, NIC, DOB, …) must be blocked in the SQL layer
@@ -674,23 +722,37 @@ class TestForbiddenColumnsSQLGuard:
 
     def setup_method(self):
         from core.rbac.sql_guard import rewrite_sql
+
         self.rewrite = rewrite_sql
 
-    @pytest.mark.parametrize("ctx", [
-        None,
-        make_ctx(Role.CTO_CEO),
-        make_ctx(Role.HR_MANAGER),
-        make_ctx(Role.DEPT_HEAD, dept_id=3),
-        make_ctx(Role.TEAM_LEAD, team_id=7),
-    ])
+    @pytest.mark.parametrize(
+        "ctx",
+        [
+            None,
+            make_ctx(Role.CTO_CEO),
+            make_ctx(Role.HR_MANAGER),
+            make_ctx(Role.DEPT_HEAD, dept_id=3),
+            make_ctx(Role.TEAM_LEAD, team_id=7),
+        ],
+    )
     def test_forbidden_select_blocked_for_all_roles(self, ctx):
         with pytest.raises(ValueError, match="Forbidden column"):
             self.rewrite("SELECT salary FROM person", ctx)
 
-    @pytest.mark.parametrize("col", [
-        "salary", "gross_salary", "cnic", "date_of_birth", "dob",
-        "bank_account", "personal_phone", "personal_email", "home_address",
-    ])
+    @pytest.mark.parametrize(
+        "col",
+        [
+            "salary",
+            "gross_salary",
+            "cnic",
+            "date_of_birth",
+            "dob",
+            "bank_account",
+            "personal_phone",
+            "personal_email",
+            "home_address",
+        ],
+    )
     def test_each_forbidden_column_blocked(self, col):
         ctx = make_ctx(Role.HR_MANAGER)
         with pytest.raises(ValueError, match="Forbidden column"):
@@ -710,8 +772,7 @@ class TestForbiddenColumnsSQLGuard:
     def test_forbidden_in_subquery_blocked(self):
         ctx = make_ctx(Role.HR_MANAGER)
         sql = (
-            "SELECT full_name FROM person WHERE id IN "
-            "(SELECT id FROM person WHERE salary > 100000)"
+            "SELECT full_name FROM person WHERE id IN (SELECT id FROM person WHERE salary > 100000)"
         )
         with pytest.raises(ValueError, match="Forbidden column"):
             self.rewrite(sql, ctx)
@@ -742,6 +803,7 @@ class TestForbiddenColumnsSQLGuard:
 # sql_guard — wildcard projections blocked at the SQL layer
 # ---------------------------------------------------------------------------
 
+
 class TestWildcardProjectionGuard:
     """
     SELECT * (and qualified variants like p.*) must be rejected for ALL roles:
@@ -752,15 +814,19 @@ class TestWildcardProjectionGuard:
 
     def setup_method(self):
         from core.rbac.sql_guard import rewrite_sql
+
         self.rewrite = rewrite_sql
 
-    @pytest.mark.parametrize("ctx", [
-        None,
-        make_ctx(Role.CTO_CEO),
-        make_ctx(Role.HR_MANAGER),
-        make_ctx(Role.DEPT_HEAD, dept_id=3),
-        make_ctx(Role.TEAM_LEAD, team_id=7),
-    ])
+    @pytest.mark.parametrize(
+        "ctx",
+        [
+            None,
+            make_ctx(Role.CTO_CEO),
+            make_ctx(Role.HR_MANAGER),
+            make_ctx(Role.DEPT_HEAD, dept_id=3),
+            make_ctx(Role.TEAM_LEAD, team_id=7),
+        ],
+    )
     def test_select_star_blocked_for_all_roles(self, ctx):
         with pytest.raises(ValueError, match="Wildcard"):
             self.rewrite("SELECT * FROM person", ctx)
@@ -800,6 +866,7 @@ class TestWildcardProjectionGuard:
 # sql_guard — whole-row references blocked at the SQL layer
 # ---------------------------------------------------------------------------
 
+
 class TestWholeRowReferenceGuard:
     """
     A bare, unqualified identifier matching a table alias (SELECT p,
@@ -810,22 +877,29 @@ class TestWholeRowReferenceGuard:
 
     def setup_method(self):
         from core.rbac.sql_guard import rewrite_sql
+
         self.rewrite = rewrite_sql
 
-    @pytest.mark.parametrize("ctx", [
-        None,
-        make_ctx(Role.CTO_CEO),
-        make_ctx(Role.DEPT_HEAD, dept_id=3),
-    ])
+    @pytest.mark.parametrize(
+        "ctx",
+        [
+            None,
+            make_ctx(Role.CTO_CEO),
+            make_ctx(Role.DEPT_HEAD, dept_id=3),
+        ],
+    )
     def test_bare_alias_select_blocked(self, ctx):
         with pytest.raises(ValueError, match="Whole-row reference"):
             self.rewrite("SELECT p FROM person p", ctx)
 
-    @pytest.mark.parametrize("ctx", [
-        None,
-        make_ctx(Role.CTO_CEO),
-        make_ctx(Role.DEPT_HEAD, dept_id=3),
-    ])
+    @pytest.mark.parametrize(
+        "ctx",
+        [
+            None,
+            make_ctx(Role.CTO_CEO),
+            make_ctx(Role.DEPT_HEAD, dept_id=3),
+        ],
+    )
     def test_to_jsonb_of_alias_blocked(self, ctx):
         with pytest.raises(ValueError, match="Whole-row reference"):
             self.rewrite("SELECT to_jsonb(p) FROM person p", ctx)
@@ -840,6 +914,7 @@ class TestWholeRowReferenceGuard:
 # sql_guard — fail-closed on unclassified tables (restricted roles only)
 # ---------------------------------------------------------------------------
 
+
 class TestUnclassifiedTableGuard:
     """
     A table that is neither `person`, person-linked, nor person-free is
@@ -850,6 +925,7 @@ class TestUnclassifiedTableGuard:
 
     def setup_method(self):
         from core.rbac.sql_guard import rewrite_sql
+
         self.rewrite = rewrite_sql
 
     def test_unclassified_table_blocked_for_restricted_role(self):
@@ -875,15 +951,18 @@ class TestUnclassifiedTableGuard:
 # core.agent._extract_tables — sqlglot-based table extraction for audit logging
 # ---------------------------------------------------------------------------
 
+
 class TestExtractTables:
     @staticmethod
     def make_step(sql: str):
         """Build a fake (AgentAction, observation) tuple for a sql_db_query call."""
         from types import SimpleNamespace
+
         return (SimpleNamespace(tool="sql_db_query", tool_input=sql), "observation")
 
     def extract(self, sql: str) -> str:
         from core.agent import _extract_tables
+
         return _extract_tables([self.make_step(sql)])
 
     def test_plain_from_and_join(self):
@@ -910,6 +989,7 @@ class TestExtractTables:
 
     def test_no_sql_db_query_steps_returns_empty_string(self):
         from core.agent import _extract_tables
+
         assert _extract_tables([]) == ""
 
 
@@ -917,11 +997,14 @@ class TestExtractTables:
 # core.rate_limit.count_recent_queries — shared rate-limit counting
 # ---------------------------------------------------------------------------
 
+
 class TestCountRecentQueries:
     @staticmethod
     def make_engine():
         import sqlalchemy
+
         from core.rbac.models import Base
+
         engine = sqlalchemy.create_engine(
             "sqlite:///:memory:",
             poolclass=sqlalchemy.pool.StaticPool,
@@ -931,21 +1014,27 @@ class TestCountRecentQueries:
         return engine
 
     def test_counts_only_matching_user_within_last_hour(self):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
+
         from sqlalchemy.orm import Session
+
         from core.rate_limit import count_recent_queries
         from core.rbac.models import AuditLog
 
         engine = self.make_engine()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         with Session(engine) as session:
             for _ in range(3):
                 session.add(AuditLog(slack_user_id="U1", question="q", created_at=now))
             session.add(AuditLog(slack_user_id="U2", question="q", created_at=now))
             # Outside the 1-hour window — must not be counted.
-            session.add(AuditLog(
-                slack_user_id="U1", question="q", created_at=now - timedelta(hours=2),
-            ))
+            session.add(
+                AuditLog(
+                    slack_user_id="U1",
+                    question="q",
+                    created_at=now - timedelta(hours=2),
+                )
+            )
             session.commit()
 
         with Session(engine) as session:

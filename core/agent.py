@@ -4,36 +4,40 @@ HR Agent - core layer.
 This module has NO dependency on the API layer.  It can be imported and used
 standalone (scripts, tests, notebooks) without starting a web server.
 """
-import logging
+
 import time
 from dataclasses import dataclass
 
-from langchain_community.utilities import SQLDatabase
+import structlog
 from langchain_community.agent_toolkits import create_sql_agent
+from langchain_community.utilities import SQLDatabase
 
 from core.config import settings
 from core.providers.factory import get_llm
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 @dataclass
 class QueryResult:
     answer: str
-    tables_accessed: str      # comma-separated, may be empty string
-    schema_rag_ms: int        # schema load time (file read, not RAG)
-    agent_ms: int             # LLM + SQL execution time
-    total_ms: int             # full round-trip
+    tables_accessed: str  # comma-separated, may be empty string
+    schema_rag_ms: int  # schema load time (file read, not RAG)
+    agent_ms: int  # LLM + SQL execution time
+    total_ms: int  # full round-trip
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+
 
 # ---------------------------------------------------------------------------
 # Build the forbidden-columns string once from the canonical set in rbac/context.
 # ---------------------------------------------------------------------------
 
+
 def _forbidden_columns_str() -> str:
     from core.rbac.context import FORBIDDEN_COLUMNS
+
     return ", ".join(sorted(FORBIDDEN_COLUMNS))
 
 
@@ -131,6 +135,7 @@ NO hr_records TABLE: For warnings/disciplinary queries use these proxies instead
 # Agent construction
 # ---------------------------------------------------------------------------
 
+
 def _check_hr_records_available(db: SQLDatabase) -> bool:
     try:
         db.run("SELECT 1 FROM hr_records LIMIT 1")
@@ -172,6 +177,7 @@ def _build_agent(rbac_ctx=None):
     )
 
     from core.rbac.sql_guard import rewrite_sql as _rewrite
+
     _original_run = db.run
 
     def _scoped_run(command, fetch="all", **kwargs):
@@ -192,14 +198,12 @@ def _build_agent(rbac_ctx=None):
     if rbac_ctx is None or rbac_ctx.is_unrestricted:
         rbac_prefix = _UNRESTRICTED_RBAC
     else:
-        from core.rbac.roles import Role
         scope_lines = rbac_ctx.scope_prompt().splitlines()
         # The base prefix already includes the forbidden-columns rule; drop that line
         # here to avoid duplication. Retain ALL other scope/enforcement lines so
         # required JOINs/filters (e.g. nsubteam_id, end_date IS NULL) are not lost.
         scope_description = "\n".join(
-            ln for ln in scope_lines
-            if ln.strip() and not ln.startswith("FORBIDDEN COLUMNS")
+            ln for ln in scope_lines if ln.strip() and not ln.startswith("FORBIDDEN COLUMNS")
         )
         rbac_prefix = _RESTRICTED_RBAC.format(
             role=rbac_ctx.role.value.upper().replace("_", " "),
@@ -252,13 +256,13 @@ def get_agent(rbac_ctx=None):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _regex_extract_tables(sql: str) -> set[str]:
     """Fallback extractor — identifiers after FROM/JOIN keywords via regex."""
     import re
+
     tables: set[str] = set()
-    for match in re.finditer(
-        r'\b(?:FROM|JOIN)\s+([`"\[]?[\w]+[`"\]]?)', sql, re.IGNORECASE
-    ):
+    for match in re.finditer(r'\b(?:FROM|JOIN)\s+([`"\[]?[\w]+[`"\]]?)', sql, re.IGNORECASE):
         tables.add(match.group(1).strip('`"[]'))
     return tables
 
@@ -311,6 +315,7 @@ def _extract_tables(intermediate_steps) -> str:
 # Query — retrieve schema context at call time, inject into user message
 # ---------------------------------------------------------------------------
 
+
 def query(
     user_input: str,
     rbac_ctx=None,
@@ -351,7 +356,9 @@ def query(
         for turn in conversation_history:
             role = "User" if turn["role"] == "user" else "Assistant"
             history_lines.append(f"{role}: {turn['content']}")
-        parts.append(f"[Conversation history — earlier turns in this thread]\n" + "\n".join(history_lines))
+        parts.append(
+            "[Conversation history — earlier turns in this thread]\n" + "\n".join(history_lines)
+        )
     parts.append(f"[Question]\n{user_input}")
     enriched_input = "\n\n".join(parts)
 
@@ -363,11 +370,14 @@ def query(
 
     for attempt in range(3):
         if attempt > 0:
-            wait = 2 ** attempt  # 2s, 4s
-            logger.warning("Agent attempt %d failed, retrying in %ds: %s", attempt, wait, last_exc)
+            wait = 2**attempt  # 2s, 4s
+            logger.warning(
+                "agent_attempt_failed", attempt=attempt, wait_seconds=wait, error=str(last_exc)
+            )
             time.sleep(wait)
         try:
             from langchain_community.callbacks import get_openai_callback
+
             with get_openai_callback() as cb:
                 result = get_agent(rbac_ctx).invoke({"input": enriched_input})
             prompt_tokens = cb.prompt_tokens
@@ -388,7 +398,7 @@ def query(
 
     if result is None:
         # All retries exhausted — return a user-friendly message, don't raise.
-        logger.error("Agent failed after 3 attempts: %s", last_exc)
+        logger.error("agent_failed_after_retries", attempts=3, error=str(last_exc))
         total_ms = int((time.monotonic() - t_total_start) * 1000)
         return QueryResult(
             answer="Sorry, I wasn't able to process your request right now. Please try again in a moment.",
@@ -409,8 +419,12 @@ def query(
     total_ms = int((time.monotonic() - t_total_start) * 1000)
 
     logger.info(
-        "query completed — total=%dms  agent=%dms  rag=%dms  tokens=%d  tables=%s",
-        total_ms, agent_ms, schema_rag_ms, total_tokens, tables_accessed or "none",
+        "query_completed",
+        total_ms=total_ms,
+        agent_ms=agent_ms,
+        schema_rag_ms=schema_rag_ms,
+        tokens=total_tokens,
+        tables=tables_accessed or "none",
     )
 
     return QueryResult(

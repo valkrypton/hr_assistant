@@ -1,6 +1,6 @@
 """Business logic for GET /audit — filter/query building over AuditLog."""
-from datetime import datetime, timezone
-from typing import Optional
+
+from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -21,16 +21,16 @@ def _parse_date(value: str, param: str) -> datetime:
     # no offset (e.g. "2025-01-01") as UTC so filtering is deterministic
     # instead of depending on DB/session timezone comparison behavior.
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 
 def get_audit_logs(
     session: Session,
-    from_date: Optional[str] = None,
-    to_date: Optional[str] = None,
-    slack_user_id: Optional[str] = None,
-    role: Optional[str] = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    slack_user_id: str | None = None,
+    role: str | None = None,
     limit: int = 100,
 ) -> list[AuditLogResponse]:
     # Clamp negatives to 0 (which yields an empty list) and cap the upper bound.

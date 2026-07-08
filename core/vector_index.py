@@ -12,17 +12,17 @@ The index is persisted to VECTOR_STORE_PATH (default: ./data/chroma).
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 import sqlalchemy
+import structlog
 
 from core.config import settings
 
 if TYPE_CHECKING:
     from langchain_core.vectorstores import VectorStore
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Document extraction
@@ -52,10 +52,7 @@ def _extract_documents() -> list[dict]:
             docs.append(
                 {
                     "id": f"team-{row['id']}",
-                    "content": (
-                        f"Project: {row['team_name']}\n"
-                        f"Description: {row['description']}"
-                    ),
+                    "content": (f"Project: {row['team_name']}\nDescription: {row['description']}"),
                     "metadata": {
                         "source": "team",
                         "team_id": row["id"],
@@ -66,7 +63,7 @@ def _extract_documents() -> list[dict]:
                 }
             )
 
-    logger.info("Extracted %d documents for indexing.", len(docs))
+    logger.info("extracted_documents_for_indexing", count=len(docs))
     return docs
 
 
@@ -74,12 +71,14 @@ def _extract_documents() -> list[dict]:
 # Embedding model
 # ---------------------------------------------------------------------------
 
+
 def _get_embeddings():
     """Return an embedding model based on AI_PROVIDER config."""
     provider = settings.AI_PROVIDER.lower()
 
     if provider == "openai":
         from langchain_openai import OpenAIEmbeddings
+
         return OpenAIEmbeddings(api_key=settings.OPENAI_API_KEY)
 
     if provider == "anthropic":
@@ -87,10 +86,12 @@ def _get_embeddings():
         # if OPENAI_API_KEY is set, otherwise use Ollama.
         if settings.OPENAI_API_KEY:
             from langchain_openai import OpenAIEmbeddings
+
             return OpenAIEmbeddings(api_key=settings.OPENAI_API_KEY)
 
     # Default: Ollama local embeddings
     from langchain_ollama import OllamaEmbeddings
+
     return OllamaEmbeddings(
         base_url=settings.OLLAMA_BASE_URL,
         model=settings.VECTOR_EMBEDDING_MODEL,
@@ -101,25 +102,24 @@ def _get_embeddings():
 # Index build / load
 # ---------------------------------------------------------------------------
 
-def build_index() -> "VectorStore":
+
+def build_index() -> VectorStore:
     """Extract documents, embed them, and persist the Chroma index."""
     from langchain_chroma import Chroma
     from langchain_core.documents import Document
 
     docs = _extract_documents()
     if not docs:
-        logger.warning("No documents found to index.")
+        logger.warning("no_documents_found_to_index")
 
-    lc_docs = [
-        Document(page_content=d["content"], metadata=d["metadata"])
-        for d in docs
-    ]
+    lc_docs = [Document(page_content=d["content"], metadata=d["metadata"]) for d in docs]
 
     embeddings = _get_embeddings()
 
     # Delete existing collection before rebuild to prevent duplicate accumulation
     # on repeated nightly runs.
     import chromadb
+
     _client = chromadb.PersistentClient(path=settings.VECTOR_STORE_PATH)
     try:
         _client.delete_collection("hr_erp")
@@ -134,14 +134,14 @@ def build_index() -> "VectorStore":
         collection_name="hr_erp",
     )
     logger.info(
-        "Vector index built with %d documents at %s.",
-        len(lc_docs),
-        settings.VECTOR_STORE_PATH,
+        "vector_index_built",
+        document_count=len(lc_docs),
+        path=settings.VECTOR_STORE_PATH,
     )
     return store
 
 
-def load_index() -> "VectorStore":
+def load_index() -> VectorStore:
     """Load an existing persisted Chroma index."""
     from langchain_chroma import Chroma
 

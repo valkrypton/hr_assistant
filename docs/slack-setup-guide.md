@@ -105,7 +105,7 @@ Restart the server after saving.
 4. Post a welcome message so users know how to use it:
    ```
    Welcome to #ask-hr! Ask @HR Assistant any workforce question.
-   
+
    Example questions:
    • @HR Assistant How many employees do we have?
    • @HR Assistant Who is on the bench right now?

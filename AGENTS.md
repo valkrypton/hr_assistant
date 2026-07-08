@@ -5,20 +5,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Setup
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv sync                     # creates .venv, installs pinned deps + dev tools from uv.lock
+uv run pre-commit install --install-hooks --hook-type pre-commit --hook-type pre-push
 cp .env.example .env        # set DATABASE_URL, AI_PROVIDER, and relevant keys
-alembic upgrade head        # create/update hr_admin_users, hr_assistant_users, hr_assistant_audit
+uv run alembic upgrade head # create/update hr_admin_users, hr_assistant_users, hr_assistant_audit
 ```
 
 Schema changes to `core/rbac/models.py` go through Alembic from here on
-(`alembic revision --autogenerate -m "..."`, then `alembic upgrade head`) — the
-`migrations/` baseline reflects the schema as of this commit.
+(`uv run alembic revision --autogenerate --rev-id "NNNN_slug" -m "..."`, then
+`uv run alembic upgrade head`) — the `migrations/` baseline reflects the schema
+as of this commit. New migration files must follow the `NNNN_slug.py` naming
+convention (`scripts/check_migration_naming.sh`, enforced by pre-commit).
+
+Add/remove/upgrade a dependency: `uv add <pkg>` / `uv remove <pkg>` / `uv lock --upgrade-package <pkg>`.
 
 ## Running
 
 ```bash
-uvicorn api.main:app --reload
+uv run uvicorn api.main:app --reload
 open index.html             # file:// — no server needed
 ```
 
