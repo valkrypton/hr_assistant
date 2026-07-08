@@ -62,7 +62,13 @@ class AdminAuth(AuthenticationBackend):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(app_engine())
+    if settings.DEBUG:
+        # Zero-config local dev only — creates tables if they don't exist yet.
+        # In production, schema changes go through Alembic (migrations/),
+        # which is the source of truth: `alembic upgrade head`. Running
+        # create_all() there can leave tables without an alembic_version,
+        # causing later migrations to fail or drift.
+        Base.metadata.create_all(app_engine())
     get_agent()  # warm up the shared unrestricted agent on startup
     yield
 

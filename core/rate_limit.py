@@ -16,15 +16,14 @@ from sqlalchemy.orm import Session
 from core.rbac.models import AuditLog
 
 
-def count_recent_queries(engine, slack_user_id: str) -> int:
+def count_recent_queries(session: Session, slack_user_id: str) -> int:
     """Return how many AuditLog rows slack_user_id has in the last hour."""
     since = datetime.now(timezone.utc) - timedelta(hours=1)
-    with Session(engine) as session:
-        return (
-            session.query(AuditLog)
-            .filter(
-                AuditLog.slack_user_id == slack_user_id,
-                AuditLog.created_at >= since,
-            )
-            .count()
+    return (
+        session.query(AuditLog)
+        .filter(
+            AuditLog.slack_user_id == slack_user_id,
+            AuditLog.created_at >= since,
         )
+        .count()
+    )

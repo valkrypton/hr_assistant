@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import logging
 import time
+from contextlib import contextmanager
 from typing import Optional
 
 from slack_sdk import WebClient
@@ -124,16 +125,27 @@ def _get_app_engine():
 _app_engine = None
 
 
-def _lookup_user(slack_user_id: str) -> Optional[HRUser]:
+@contextmanager
+def _db_session():
+    """One short-lived Session per DB-only block. Not reused across the
+    agent_query()/Slack API calls in process_event — those can take up to
+    ~15s and shouldn't hold a pool connection idle for that whole span (this
+    mirrors api.deps.db_session(), duplicated locally since adapters/ must
+    not import from api/ — see AGENTS.md import rules)."""
     with Session(_get_app_engine()) as session:
-        return (
-            session.query(HRUser)
-            .filter_by(slack_user_id=slack_user_id, is_active=True)
-            .first()
-        )
+        yield session
+
+
+def _lookup_user(session: Session, slack_user_id: str) -> Optional[HRUser]:
+    return (
+        session.query(HRUser)
+        .filter_by(slack_user_id=slack_user_id, is_active=True)
+        .first()
+    )
 
 
 def _write_audit(
+    session: Session,
     *,
     slack_user_id: str,
     employee_id: Optional[int],
@@ -153,27 +165,26 @@ def _write_audit(
     history_fetch_ms: Optional[int] = None,
     slack_post_ms: Optional[int] = None,
 ) -> None:
-    with Session(_get_app_engine()) as session:
-        session.add(AuditLog(
-            slack_user_id=slack_user_id,
-            employee_id=employee_id,
-            role=role,
-            question=question,
-            answer=answer,
-            tables_accessed=tables_accessed,
-            error=error,
-            schema_rag_ms=schema_rag_ms,
-            agent_ms=agent_ms,
-            total_ms=total_ms,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            user_lookup_ms=user_lookup_ms,
-            rate_check_ms=rate_check_ms,
-            history_fetch_ms=history_fetch_ms,
-            slack_post_ms=slack_post_ms,
-        ))
-        session.commit()
+    session.add(AuditLog(
+        slack_user_id=slack_user_id,
+        employee_id=employee_id,
+        role=role,
+        question=question,
+        answer=answer,
+        tables_accessed=tables_accessed,
+        error=error,
+        schema_rag_ms=schema_rag_ms,
+        agent_ms=agent_ms,
+        total_ms=total_ms,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        user_lookup_ms=user_lookup_ms,
+        rate_check_ms=rate_check_ms,
+        history_fetch_ms=history_fetch_ms,
+        slack_post_ms=slack_post_ms,
+    ))
+    session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -274,10 +285,21 @@ def process_event(
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     client = WebClient(token=settings.SLACK_BOT_TOKEN, ssl=ssl_ctx)
 
-    # Resolve identity and build RBAC context.
+    # Resolve identity and rate-limit count in one short-lived session,
+    # closed before any Slack API call or the agent_query() call below —
+    # neither should hold a pool connection idle for their duration (the
+    # agent call alone can take up to ~15s).
     t_lookup = time.monotonic()
-    hr_user = _lookup_user(slack_user_id)
-    user_lookup_ms = int((time.monotonic() - t_lookup) * 1000)
+    with _db_session() as session:
+        hr_user = _lookup_user(session, slack_user_id)
+        user_lookup_ms = int((time.monotonic() - t_lookup) * 1000)
+
+        rate_check_ms = 0
+        rate_count = None
+        if hr_user and hr_user.role and settings.RATE_LIMIT_PER_HOUR > 0:
+            t_rate = time.monotonic()
+            rate_count = count_recent_queries(session, slack_user_id)
+            rate_check_ms = int((time.monotonic() - t_rate) * 1000)
 
     if not hr_user:
         logger.warning("Slack user %s is not registered in hr_assistant_users.", slack_user_id)
@@ -307,24 +329,19 @@ def process_event(
     employee_id = hr_user.employee_id
     role = hr_user.role
 
-    # Rate limit check — post a friendly message and bail if exceeded.
-    rate_check_ms = 0
-    if hr_user:
-        limit = settings.RATE_LIMIT_PER_HOUR
-        if limit > 0:
-            t_rate = time.monotonic()
-            count = count_recent_queries(_get_app_engine(), slack_user_id)
-            rate_check_ms = int((time.monotonic() - t_rate) * 1000)
-            if count >= limit:
-                try:
-                    client.chat_postMessage(
-                        channel=channel,
-                        thread_ts=thread_ts,
-                        text=f"You've reached the limit of {limit} queries per hour. Please try again later.",
-                    )
-                except Exception:
-                    pass
-                return
+    # Rate limit check (count was already fetched above) — post a friendly
+    # message and bail if exceeded.
+    limit = settings.RATE_LIMIT_PER_HOUR
+    if limit > 0 and rate_count is not None and rate_count >= limit:
+        try:
+            client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text=f"You've reached the limit of {limit} queries per hour. Please try again later.",
+            )
+        except Exception:
+            pass
+        return
 
     # Fetch bot's own user ID once so we can identify its messages in the thread.
     t_history = time.monotonic()
@@ -364,36 +381,40 @@ def process_event(
             result.agent_ms, slack_post_ms, result.total_ms,
         )
 
-        _write_audit(
-            slack_user_id=slack_user_id,
-            employee_id=employee_id,
-            role=role,
-            question=text,
-            answer=result.answer,
-            tables_accessed=result.tables_accessed or None,
-            schema_rag_ms=result.schema_rag_ms,
-            agent_ms=result.agent_ms,
-            total_ms=result.total_ms,
-            prompt_tokens=result.prompt_tokens or None,
-            completion_tokens=result.completion_tokens or None,
-            total_tokens=result.total_tokens or None,
-            user_lookup_ms=user_lookup_ms,
-            rate_check_ms=rate_check_ms,
-            history_fetch_ms=history_fetch_ms,
-            slack_post_ms=slack_post_ms,
-        )
+        with _db_session() as session:
+            _write_audit(
+                session,
+                slack_user_id=slack_user_id,
+                employee_id=employee_id,
+                role=role,
+                question=text,
+                answer=result.answer,
+                tables_accessed=result.tables_accessed or None,
+                schema_rag_ms=result.schema_rag_ms,
+                agent_ms=result.agent_ms,
+                total_ms=result.total_ms,
+                prompt_tokens=result.prompt_tokens or None,
+                completion_tokens=result.completion_tokens or None,
+                total_tokens=result.total_tokens or None,
+                user_lookup_ms=user_lookup_ms,
+                rate_check_ms=rate_check_ms,
+                history_fetch_ms=history_fetch_ms,
+                slack_post_ms=slack_post_ms,
+            )
 
     except SlackApiError as exc:
         logger.error("Slack API error posting reply: %s", exc.response["error"])
     except Exception as exc:
         logger.exception("Error processing Slack event for user %s", slack_user_id)
-        _write_audit(
-            slack_user_id=slack_user_id,
-            employee_id=employee_id,
-            role=role,
-            question=text,
-            error=str(exc),
-        )
+        with _db_session() as session:
+            _write_audit(
+                session,
+                slack_user_id=slack_user_id,
+                employee_id=employee_id,
+                role=role,
+                question=text,
+                error=str(exc),
+            )
         # Best-effort error reply — don't let this raise.
         try:
             client.chat_postMessage(
