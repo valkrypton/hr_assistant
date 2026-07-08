@@ -61,6 +61,34 @@ def _format_rows(rows: list) -> str:
     return str([tuple(r) for r in rows])
 
 
+def sql_literal(value: str) -> str:
+    """A safely single-quoted SQL string literal, for interpolating
+    untrusted values (e.g. a team name from the model) into typed-tool SQL.
+    sqlglot escapes embedded quotes, so the value can only ever be a string
+    literal — and the whole statement is still re-parsed by the guard."""
+    return exp.Literal.string(value).sql(dialect="postgres")
+
+
+def _collector_for(ctx) -> SqlCollector | None:
+    """The run's shared SqlCollector, created on the context's metadata on first
+    use. None for the unscoped path (no context)."""
+    if ctx is None:
+        return None
+    collector = ctx.metadata.get("_sql_collector")
+    if collector is None:
+        collector = SqlCollector()
+        ctx.metadata["_sql_collector"] = collector
+    return collector
+
+
+def run_via_guard(ctx, sql: str) -> str:
+    """Execute SQL through the guard for this context. Shared by the free-form
+    SQL tool and the typed tools so scope injection, forbidden-column blocking,
+    and telemetry all happen in one place."""
+    rbac = ctx.rbac if ctx is not None else None
+    return execute_guarded_sql(sql, rbac, _collector_for(ctx))
+
+
 def execute_guarded_sql(sql: str, rbac_ctx, collector: SqlCollector | None = None) -> str:
     """Guard, execute (read-only ERP), and return the row observation.
 
@@ -86,14 +114,7 @@ class _SqlInput(BaseModel):
 
 
 def _run(ctx, sql: str) -> str:
-    rbac = ctx.rbac if ctx is not None else None
-    collector = None
-    if ctx is not None:
-        collector = ctx.metadata.get("_sql_collector")
-        if collector is None:
-            collector = SqlCollector()
-            ctx.metadata["_sql_collector"] = collector
-    return execute_guarded_sql(sql, rbac, collector)
+    return run_via_guard(ctx, sql)
 
 
 QUERY_ERP_SQL = Tool(

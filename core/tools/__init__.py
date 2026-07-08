@@ -6,9 +6,20 @@ context is authorized to use.
 """
 
 from core.tools.base import Tool
+from core.tools.joiners import JOINERS_SUMMARY
+from core.tools.leave import LEAVE_LOOKUP
 from core.tools.registry import registry
 from core.tools.sql import QUERY_ERP_SQL
+from core.tools.team import TEAM_ROSTER
 
-registry.register(QUERY_ERP_SQL)
+for _tool in (QUERY_ERP_SQL, TEAM_ROSTER, LEAVE_LOOKUP, JOINERS_SUMMARY):
+    registry.register(_tool)
 
-__all__ = ["QUERY_ERP_SQL", "Tool", "registry"]
+__all__ = [
+    "JOINERS_SUMMARY",
+    "LEAVE_LOOKUP",
+    "QUERY_ERP_SQL",
+    "TEAM_ROSTER",
+    "Tool",
+    "registry",
+]

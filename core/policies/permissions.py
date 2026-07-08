@@ -18,9 +18,21 @@ Typed tools (added incrementally) declare their own actions here, e.g.
 
 from core.rbac.roles import Role
 
+# Typed-tool actions granted to every role — the tools derive scope from the
+# request's context and run through the SQL guard, so a restricted role calling
+# them still only sees its own department/team.
+_TOOL_ACTIONS = frozenset(
+    {
+        "sql.execute",
+        "employee.team.read",
+        "employee.leave.read",
+        "employee.headcount.read",
+    }
+)
+
 ROLE_PERMISSIONS: dict[Role, frozenset[str]] = {
-    Role.CTO_CEO: frozenset({"data.scope.company", "sql.execute"}),
-    Role.HR_MANAGER: frozenset({"data.scope.company", "sql.execute"}),
-    Role.DEPT_HEAD: frozenset({"data.scope.department", "sql.execute"}),
-    Role.TEAM_LEAD: frozenset({"data.scope.team", "sql.execute"}),
+    Role.CTO_CEO: frozenset({"data.scope.company"}) | _TOOL_ACTIONS,
+    Role.HR_MANAGER: frozenset({"data.scope.company"}) | _TOOL_ACTIONS,
+    Role.DEPT_HEAD: frozenset({"data.scope.department"}) | _TOOL_ACTIONS,
+    Role.TEAM_LEAD: frozenset({"data.scope.team"}) | _TOOL_ACTIONS,
 }
