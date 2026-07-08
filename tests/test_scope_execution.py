@@ -31,6 +31,7 @@ accidental dept<->team cross-wiring is caught):
        team 8   = {102, 104}
        everyone = {101, 102, 103, 104}
 """
+
 import sqlite3
 
 import pytest
@@ -39,7 +40,6 @@ import sqlglot
 from core.rbac.context import RBACContext
 from core.rbac.roles import Role
 from core.rbac.sql_guard import rewrite_sql
-
 
 DEPT3_PERSONS = {101, 102}
 TEAM7_PERSONS = {101, 103}
@@ -76,7 +76,7 @@ _SEED = [
         (2, 102, 8, NULL, 1),
         (3, 103, 7, NULL, 1),
         (4, 104, 8, NULL, 1),
-        (5, 101, 8, '2024-01-01', 0)""",   # Alice's OLD, inactive team-8 row — must not count
+        (5, 101, 8, '2024-01-01', 0)""",  # Alice's OLD, inactive team-8 row — must not count
     "INSERT INTO leave_record (id, person_id, status) VALUES (1,101,1),(2,102,1),(3,103,1),(4,104,1)",
     "INSERT INTO person_week_log (id, person_id, is_completed) VALUES (1,101,0),(2,102,0),(3,103,0),(4,104,0)",
 ]
@@ -112,6 +112,7 @@ def _ctx(role, dept=None, team=None):
 # ---------------------------------------------------------------------------
 # Department head — sees only their own department, whatever the query shape
 # ---------------------------------------------------------------------------
+
 
 class TestDeptHeadExecution:
     def test_direct_person_select(self, conn):
@@ -156,6 +157,7 @@ class TestDeptHeadExecution:
 # Team lead — sees only active members of their own team
 # ---------------------------------------------------------------------------
 
+
 class TestTeamLeadExecution:
     def test_direct_person_select(self, conn):
         rows = _run(conn, "SELECT id FROM person", _ctx(Role.TEAM_LEAD, team=7))
@@ -185,6 +187,7 @@ class TestTeamLeadExecution:
 # Unrestricted roles — full access, and NOT over-restricted
 # ---------------------------------------------------------------------------
 
+
 class TestUnrestrictedExecution:
     @pytest.mark.parametrize("role", [Role.CTO_CEO, Role.HR_MANAGER])
     def test_sees_all_people(self, conn, role):
@@ -199,6 +202,7 @@ class TestUnrestrictedExecution:
 # ---------------------------------------------------------------------------
 # Misconfigured restricted roles — deny all (1 = 0), never leak
 # ---------------------------------------------------------------------------
+
 
 class TestMisconfiguredDeniesAll:
     def test_dept_head_no_dept_returns_nothing(self, conn):

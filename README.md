@@ -50,8 +50,8 @@ index.html                — Single-file web UI (no server needed, works from f
 ## Setup
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv sync                     # creates .venv, installs pinned deps + dev tools from uv.lock
+uv run pre-commit install --install-hooks --hook-type pre-commit --hook-type pre-push
 cp .env.example .env
 ```
 
@@ -72,11 +72,13 @@ Edit `.env`:
 Create the app-DB tables (`hr_admin_users`, `hr_assistant_users`, `hr_assistant_audit`):
 
 ```bash
-alembic upgrade head
+uv run alembic upgrade head
 ```
 
 Schema changes to `core/rbac/models.py` go through Alembic from here on:
-`alembic revision --autogenerate -m "..."` to generate a migration, then `alembic upgrade head` to apply it.
+`uv run alembic revision --autogenerate --rev-id "NNNN_slug" -m "..."` to generate a migration
+(filename must follow the `NNNN_slug.py` convention — enforced by a pre-commit hook), then
+`uv run alembic upgrade head` to apply it.
 
 ### Local ERP (no real ERP database)
 
@@ -97,7 +99,7 @@ DATABASE_URL=postgresql://localhost/hr_erp_local
 **3. Create tables and seed data:**
 
 ```bash
-python scripts/seed_erp.py
+uv run python scripts/seed_erp.py
 ```
 
 This creates all ERP tables and populates them with 500 employees (420 active, 80 exited), 22 teams, leave records, weekly time logs, competency ratings, skill assignments, and job requisitions.
@@ -120,7 +122,7 @@ Only needed if you want "who has Sabre API experience?"-style queries over free-
 
 ```bash
 ollama pull nomic-embed-text          # 274 MB embedding model
-python scripts/reindex.py             # index team/project descriptions
+uv run python scripts/reindex.py      # index team/project descriptions
 ```
 
 Schedule `scripts/reindex.py` nightly to keep the index fresh.
@@ -128,7 +130,7 @@ Schedule `scripts/reindex.py` nightly to keep the index fresh.
 ## Running
 
 ```bash
-uvicorn api.main:app --reload
+uv run uvicorn api.main:app --reload
 open index.html    # or just open in your browser — no server needed
 ```
 

@@ -1,5 +1,3 @@
-from typing import Optional
-
 from fastapi import APIRouter, Depends
 
 from api.deps import DbDep, require_admin
@@ -12,10 +10,10 @@ router = APIRouter(dependencies=[Depends(require_admin)])
 @router.get("/audit", response_model=list[AuditLogResponse])
 def get_audit_logs(
     session: DbDep,
-    from_date: Optional[str] = None,
-    to_date: Optional[str] = None,
-    slack_user_id: Optional[str] = None,
-    role: Optional[str] = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    slack_user_id: str | None = None,
+    role: str | None = None,
     limit: int = 100,
 ):
     """

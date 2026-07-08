@@ -110,9 +110,7 @@ class Settings(BaseSettings):
         self.CORS_ALLOW_ORIGINS = [
             o.strip() for o in self.CORS_ALLOW_ORIGINS.split(",") if o.strip()
         ]
-        self.INCLUDED_TABLES = [
-            t.strip() for t in self.INCLUDED_TABLES.split(",") if t.strip()
-        ]
+        self.INCLUDED_TABLES = [t.strip() for t in self.INCLUDED_TABLES.split(",") if t.strip()]
 
         # Preserve the pre-pydantic-settings defaults: DATABASE_URL falls back
         # to the local sqlite ERP db, and APP_DATABASE_URL falls back to the

@@ -4,6 +4,7 @@ HR Assistant — API layer (FastAPI).
 This file owns only app setup: lifespan, middleware, admin panel, and router
 registration.  All route logic lives in api/routes/.
 """
+
 import asyncio
 from contextlib import asynccontextmanager
 
@@ -13,9 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from sqladmin import Admin
 from sqladmin.authentication import AuthenticationBackend
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
-from starlette.concurrency import run_in_threadpool
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from api.admin import AuditLogAdmin, HRUserAdmin
@@ -24,12 +25,16 @@ from api.routes import audit, health, query, slack, users
 from core.agent import get_agent
 from core.auth import verify_password
 from core.config import settings
+from core.logging import configure_logging
 from core.rbac.models import AdminUser, Base
+
+configure_logging()
 
 
 # ---------------------------------------------------------------------------
 # SQLAdmin authentication backend
 # ---------------------------------------------------------------------------
+
 
 class AdminAuth(AuthenticationBackend):
     async def login(self, request: StarletteRequest) -> bool:
@@ -39,6 +44,7 @@ class AdminAuth(AuthenticationBackend):
 
         def _lookup():
             from sqlalchemy.orm import Session
+
             with Session(app_engine()) as session:
                 return session.query(AdminUser).filter_by(username=username, is_active=True).first()
 
@@ -59,6 +65,7 @@ class AdminAuth(AuthenticationBackend):
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -101,9 +108,8 @@ _ADMIN_CSS = b"""<style>
 class AdminCSSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
-        if (
-            request.url.path.startswith("/admin")
-            and "text/html" in response.headers.get("content-type", "")
+        if request.url.path.startswith("/admin") and "text/html" in response.headers.get(
+            "content-type", ""
         ):
             body = b"".join([chunk async for chunk in response.body_iterator])
             body = body.replace(b"</head>", _ADMIN_CSS)
@@ -130,7 +136,9 @@ app.add_middleware(AdminCSSMiddleware)
 # SQLAdmin panel  →  http://localhost:8000/admin
 # ---------------------------------------------------------------------------
 
-admin = Admin(app, engine=app_engine(), authentication_backend=AdminAuth(secret_key=settings.SECRET_KEY))
+admin = Admin(
+    app, engine=app_engine(), authentication_backend=AdminAuth(secret_key=settings.SECRET_KEY)
+)
 admin.add_view(HRUserAdmin)
 admin.add_view(AuditLogAdmin)
 

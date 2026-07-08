@@ -11,12 +11,13 @@ The APP_DATABASE_URL is overridden to a fresh SQLite file per test session
 so route handlers automatically use the test DB (they call app_engine() at
 request time, which reads settings.APP_DATABASE_URL).
 """
+
 import base64
+from datetime import UTC
+from unittest.mock import patch
 
 import pytest
-from unittest.mock import patch
 from fastapi.testclient import TestClient
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -25,9 +26,8 @@ from fastapi.testclient import TestClient
 MOCK_ANSWER = "Here is the answer to your question based on the available data."
 _ADMIN_CREDS = ("test-admin", "test-password-123")
 _ADMIN_HEADERS = {
-    "Authorization": "Basic " + base64.b64encode(
-        f"{_ADMIN_CREDS[0]}:{_ADMIN_CREDS[1]}".encode()
-    ).decode()
+    "Authorization": "Basic "
+    + base64.b64encode(f"{_ADMIN_CREDS[0]}:{_ADMIN_CREDS[1]}".encode()).decode()
 }
 
 
@@ -41,6 +41,7 @@ def test_db_url(tmp_path_factory):
 def mock_query():
     """Patch core.agent.query to return a canned QueryResult (module-scoped)."""
     from core.agent import QueryResult
+
     result = QueryResult(
         answer=MOCK_ANSWER,
         tables_accessed="person,department",
@@ -63,8 +64,8 @@ def client(test_db_url, mock_query):
     - agent mocked to return canned QueryResult
     - SQLAdmin admin warmup skipped
     """
-    from core.config import settings
     from api.deps import app_engine, erp_engine
+    from core.config import settings
 
     orig_app = settings.APP_DATABASE_URL
     orig_erp = settings.DATABASE_URL
@@ -78,19 +79,25 @@ def client(test_db_url, mock_query):
     try:
         # Create tables and seed test admin user.
         import sqlalchemy
+        from sqlalchemy.orm import Session as _Session
+
         from core.auth import hash_password
         from core.rbac.models import AdminUser, Base
-        from sqlalchemy.orm import Session as _Session
+
         engine = sqlalchemy.create_engine(test_db_url)
         Base.metadata.create_all(engine)
         with _Session(engine) as s:
-            s.add(AdminUser(username=_ADMIN_CREDS[0], hashed_password=hash_password(_ADMIN_CREDS[1])))
+            s.add(
+                AdminUser(username=_ADMIN_CREDS[0], hashed_password=hash_password(_ADMIN_CREDS[1]))
+            )
             s.commit()
 
         with patch("core.agent.get_agent"):  # skip LLM warmup in lifespan
             from importlib import reload
+
             import api.main as main_mod
-            reload(main_mod)                # pick up patched settings
+
+            reload(main_mod)  # pick up patched settings
             with TestClient(main_mod.app, raise_server_exceptions=False) as c:
                 yield c
     finally:
@@ -103,17 +110,22 @@ def client(test_db_url, mock_query):
 
 _user_counter = 0
 
+
 @pytest.fixture()
 def registered_user(client):
     """Register a CTO/CEO test user with a unique ID per test."""
     global _user_counter
     _user_counter += 1
     slack_id = f"U_TEST_{_user_counter}"
-    r = client.post("/users", json={
-        "employee_id": 900 + _user_counter,
-        "role": "cto_ceo",
-        "slack_user_id": slack_id,
-    }, headers=_ADMIN_HEADERS)
+    r = client.post(
+        "/users",
+        json={
+            "employee_id": 900 + _user_counter,
+            "role": "cto_ceo",
+            "slack_user_id": slack_id,
+        },
+        headers=_ADMIN_HEADERS,
+    )
     assert r.status_code == 201
     user_id = r.json()["id"]
     yield slack_id
@@ -123,6 +135,7 @@ def registered_user(client):
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
+
 
 class TestHealth:
     def test_health_responds(self, client):
@@ -134,6 +147,7 @@ class TestHealth:
 # /query — unauthenticated
 # ---------------------------------------------------------------------------
 
+
 class TestQueryUnauthenticated:
     def test_empty_query_rejected(self, client):
         r = client.post("/query", json={"query": "   "})
@@ -144,28 +158,31 @@ class TestQueryUnauthenticated:
         assert r.status_code == 200
         assert r.json()["answer"] == MOCK_ANSWER
 
-    @pytest.mark.parametrize("query_text", [
-        "Who hasn't filled their daily logs this week?",
-        "Who's not adding full 8 hours in their daily logs?",
-        "Who got warnings in the last quarter?",
-        "Any devs who resigned recently?",
-        "Who is not performing well on the backend team?",
-        "Who's available for a Django project starting May?",
-        "Who's been non-billable for the last 2 months?",
-        "Show me the backend team right now",
-        "Who has experience with Sabre APIs?",
-        "Find React devs with e-commerce experience available in May",
-        "Which team has the most attrition this year?",
-        "Who's on leave next week?",
-        "How many new joiners did we have in 2025?",
-        "Of the 2025 joiners, how many were employees and how many subcontractors?",
-        "How many people who joined in 2025 also left in 2025?",
-        "Break down all resignations by department",
-        "Show resignations by years of experience — use 1-year brackets",
-        "How many terminations did we have in 2023?",
-        "How many Software Engineers, QA Engineers, and Product Managers do we have?",
-        "What is Bilal Qureshi's competency score?",
-    ])
+    @pytest.mark.parametrize(
+        "query_text",
+        [
+            "Who hasn't filled their daily logs this week?",
+            "Who's not adding full 8 hours in their daily logs?",
+            "Who got warnings in the last quarter?",
+            "Any devs who resigned recently?",
+            "Who is not performing well on the backend team?",
+            "Who's available for a Django project starting May?",
+            "Who's been non-billable for the last 2 months?",
+            "Show me the backend team right now",
+            "Who has experience with Sabre APIs?",
+            "Find React devs with e-commerce experience available in May",
+            "Which team has the most attrition this year?",
+            "Who's on leave next week?",
+            "How many new joiners did we have in 2025?",
+            "Of the 2025 joiners, how many were employees and how many subcontractors?",
+            "How many people who joined in 2025 also left in 2025?",
+            "Break down all resignations by department",
+            "Show resignations by years of experience — use 1-year brackets",
+            "How many terminations did we have in 2023?",
+            "How many Software Engineers, QA Engineers, and Product Managers do we have?",
+            "What is Bilal Qureshi's competency score?",
+        ],
+    )
     def test_canonical_query(self, client, query_text):
         """All 20 canonical queries from SPEC.md must return 200 with an answer."""
         r = client.post("/query", json={"query": query_text})
@@ -177,44 +194,61 @@ class TestQueryUnauthenticated:
 # /query — authenticated with RBAC
 # ---------------------------------------------------------------------------
 
+
 class TestQueryAuthenticated:
     def test_unregistered_user_forbidden(self, client):
-        r = client.post("/query", json={
-            "query": "How many employees?",
-            "slack_user_id": "U_NOT_REGISTERED",
-        })
+        r = client.post(
+            "/query",
+            json={
+                "query": "How many employees?",
+                "slack_user_id": "U_NOT_REGISTERED",
+            },
+        )
         assert r.status_code == 403
 
     def test_registered_user_gets_answer(self, client, registered_user):
-        r = client.post("/query", json={
-            "query": "How many employees?",
-            "slack_user_id": registered_user,
-        })
+        r = client.post(
+            "/query",
+            json={
+                "query": "How many employees?",
+                "slack_user_id": registered_user,
+            },
+        )
         assert r.status_code == 200
         assert r.json()["answer"] == MOCK_ANSWER
 
     def test_audit_log_written_on_success(self, client, registered_user):
-        r = client.post("/query", json={
-            "query": "Audit test query",
-            "slack_user_id": registered_user,
-        })
+        r = client.post(
+            "/query",
+            json={
+                "query": "Audit test query",
+                "slack_user_id": registered_user,
+            },
+        )
         assert r.status_code == 200
-        logs = client.get(f"/audit?slack_user_id={registered_user}&limit=5", headers=_ADMIN_HEADERS).json()
-        questions = [l["question"] for l in logs]
+        logs = client.get(
+            f"/audit?slack_user_id={registered_user}&limit=5", headers=_ADMIN_HEADERS
+        ).json()
+        questions = [log["question"] for log in logs]
         assert "Audit test query" in questions
-        entry = next(l for l in logs if l["question"] == "Audit test query")
+        entry = next(log for log in logs if log["question"] == "Audit test query")
         assert entry["answer"] == MOCK_ANSWER
         assert entry["total_tokens"] == 600
 
     def test_audit_log_written_on_error(self, client, registered_user):
         with patch("api.services.query_service.agent_query", side_effect=RuntimeError("DB down")):
-            r = client.post("/query", json={
-                "query": "Error test query",
-                "slack_user_id": registered_user,
-            })
+            r = client.post(
+                "/query",
+                json={
+                    "query": "Error test query",
+                    "slack_user_id": registered_user,
+                },
+            )
         assert r.status_code == 500
-        logs = client.get(f"/audit?slack_user_id={registered_user}&limit=10", headers=_ADMIN_HEADERS).json()
-        errors = [l for l in logs if l["question"] == "Error test query"]
+        logs = client.get(
+            f"/audit?slack_user_id={registered_user}&limit=10", headers=_ADMIN_HEADERS
+        ).json()
+        errors = [log for log in logs if log["question"] == "Error test query"]
         assert len(errors) > 0
         assert errors[0]["error"] is not None
 
@@ -222,6 +256,7 @@ class TestQueryAuthenticated:
 # ---------------------------------------------------------------------------
 # /query — identity forgery protection
 # ---------------------------------------------------------------------------
+
 
 class TestQueryIdentityForgery:
     """
@@ -235,15 +270,19 @@ class TestQueryIdentityForgery:
     def prod_mode(self):
         """Disable the dev-mode open-access flag for the duration of a test."""
         from core.config import settings
+
         with patch.object(settings, "ALLOW_UNAUTHENTICATED_QUERY", False):
             yield
 
     def test_forged_slack_id_without_auth_rejected(self, client, registered_user, prod_mode):
         # The attack from the review: caller supplies a real user's Slack ID.
-        r = client.post("/query", json={
-            "query": "How many employees?",
-            "slack_user_id": registered_user,
-        })
+        r = client.post(
+            "/query",
+            json={
+                "query": "How many employees?",
+                "slack_user_id": registered_user,
+            },
+        )
         assert r.status_code == 401
 
     def test_no_slack_id_without_auth_rejected(self, client, prod_mode):
@@ -252,35 +291,50 @@ class TestQueryIdentityForgery:
 
     def test_wrong_admin_password_rejected(self, client, registered_user, prod_mode):
         bad = {"Authorization": "Basic " + base64.b64encode(b"test-admin:wrong").decode()}
-        r = client.post("/query", json={
-            "query": "How many employees?",
-            "slack_user_id": registered_user,
-        }, headers=bad)
+        r = client.post(
+            "/query",
+            json={
+                "query": "How many employees?",
+                "slack_user_id": registered_user,
+            },
+            headers=bad,
+        )
         assert r.status_code == 401
 
     def test_admin_vouched_query_allowed(self, client, registered_user, prod_mode):
-        r = client.post("/query", json={
-            "query": "How many employees?",
-            "slack_user_id": registered_user,
-        }, headers=_ADMIN_HEADERS)
+        r = client.post(
+            "/query",
+            json={
+                "query": "How many employees?",
+                "slack_user_id": registered_user,
+            },
+            headers=_ADMIN_HEADERS,
+        )
         assert r.status_code == 200
         assert r.json()["answer"] == MOCK_ANSWER
 
     def test_admin_no_slack_id_allowed(self, client, prod_mode):
         # Authenticated admin may run without a slack_user_id — no RBAC scope
         # is applied, but the admin credentials are proof enough of identity.
-        r = client.post("/query", json={
-            "query": "How many employees?",
-        }, headers=_ADMIN_HEADERS)
+        r = client.post(
+            "/query",
+            json={
+                "query": "How many employees?",
+            },
+            headers=_ADMIN_HEADERS,
+        )
         assert r.status_code == 200
         assert r.json()["answer"] == MOCK_ANSWER
 
     def test_dev_mode_still_open(self, client, registered_user):
         # With ALLOW_UNAUTHENTICATED_QUERY=true (module default here), no auth needed.
-        r = client.post("/query", json={
-            "query": "How many employees?",
-            "slack_user_id": registered_user,
-        })
+        r = client.post(
+            "/query",
+            json={
+                "query": "How many employees?",
+                "slack_user_id": registered_user,
+            },
+        )
         assert r.status_code == 200
 
 
@@ -288,14 +342,17 @@ class TestQueryIdentityForgery:
 # Rate limiting
 # ---------------------------------------------------------------------------
 
+
 class TestRateLimit:
     def test_rate_limit_enforced(self, client):
         """Pre-fill audit log to hit limit, next query should get 429."""
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         import sqlalchemy
-        from core.config import settings
-        from core.rbac.models import AuditLog, HRUser, Base
         from sqlalchemy.orm import Session
+
+        from core.config import settings
+        from core.rbac.models import AuditLog, HRUser
 
         slack_id = "U_RATE_TEST"
         engine = sqlalchemy.create_engine(settings.APP_DATABASE_URL)
@@ -308,21 +365,31 @@ class TestRateLimit:
         limit = 2
         with Session(engine) as session:
             for _ in range(limit):
-                session.add(AuditLog(
-                    slack_user_id=slack_id,
-                    question="prior",
-                    created_at=datetime.now(timezone.utc),
-                ))
+                session.add(
+                    AuditLog(
+                        slack_user_id=slack_id,
+                        question="prior",
+                        created_at=datetime.now(UTC),
+                    )
+                )
             session.commit()
 
-        with patch("api.deps.settings.RATE_LIMIT_PER_HOUR", limit), \
-             patch("api.services.query_service.check_rate_limit",
-                   side_effect=__import__("fastapi").HTTPException(
-                       status_code=429, detail="Rate limit exceeded")):
-            r = client.post("/query", json={
-                "query": "One more",
-                "slack_user_id": slack_id,
-            })
+        with (
+            patch("api.deps.settings.RATE_LIMIT_PER_HOUR", limit),
+            patch(
+                "api.services.query_service.check_rate_limit",
+                side_effect=__import__("fastapi").HTTPException(
+                    status_code=429, detail="Rate limit exceeded"
+                ),
+            ),
+        ):
+            r = client.post(
+                "/query",
+                json={
+                    "query": "One more",
+                    "slack_user_id": slack_id,
+                },
+            )
         assert r.status_code == 429
 
 
@@ -330,14 +397,23 @@ class TestRateLimit:
 # Admin authentication — unauthenticated requests must be rejected
 # ---------------------------------------------------------------------------
 
+
 class TestAdminAuth:
     def test_list_users_without_auth_returns_401(self, client):
         assert client.get("/users").status_code == 401
 
     def test_post_users_without_auth_returns_401(self, client):
-        assert client.post("/users", json={
-            "employee_id": 1, "role": "cto_ceo", "slack_user_id": "U_NOAUTH",
-        }).status_code == 401
+        assert (
+            client.post(
+                "/users",
+                json={
+                    "employee_id": 1,
+                    "role": "cto_ceo",
+                    "slack_user_id": "U_NOAUTH",
+                },
+            ).status_code
+            == 401
+        )
 
     def test_delete_user_without_auth_returns_401(self, client):
         assert client.delete("/users/1").status_code == 401
@@ -347,6 +423,7 @@ class TestAdminAuth:
 
     def test_wrong_password_returns_401(self, client):
         import base64
+
         bad_headers = {
             "Authorization": "Basic " + base64.b64encode(b"test-admin:wrong-password").decode()
         }
@@ -357,6 +434,7 @@ class TestAdminAuth:
 # User admin endpoints
 # ---------------------------------------------------------------------------
 
+
 class TestUserAdmin:
     def test_list_users(self, client):
         r = client.get("/users", headers=_ADMIN_HEADERS)
@@ -364,11 +442,15 @@ class TestUserAdmin:
         assert isinstance(r.json(), list)
 
     def test_register_user(self, client):
-        r = client.post("/users", json={
-            "employee_id": 777,
-            "role": "hr_manager",
-            "slack_user_id": "U_ADMIN_TEST",
-        }, headers=_ADMIN_HEADERS)
+        r = client.post(
+            "/users",
+            json={
+                "employee_id": 777,
+                "role": "hr_manager",
+                "slack_user_id": "U_ADMIN_TEST",
+            },
+            headers=_ADMIN_HEADERS,
+        )
         assert r.status_code == 201
         data = r.json()
         assert data["role"] == "hr_manager"
@@ -385,11 +467,15 @@ class TestUserAdmin:
         client.delete(f"/users/{r1.json()['id']}", headers=_ADMIN_HEADERS)
 
     def test_deregister_user(self, client):
-        r = client.post("/users", json={
-            "employee_id": 555,
-            "role": "team_lead",
-            "slack_user_id": "U_DEL_TEST",
-        }, headers=_ADMIN_HEADERS)
+        r = client.post(
+            "/users",
+            json={
+                "employee_id": 555,
+                "role": "team_lead",
+                "slack_user_id": "U_DEL_TEST",
+            },
+            headers=_ADMIN_HEADERS,
+        )
         assert r.status_code == 201
         user_id = r.json()["id"]
         assert client.delete(f"/users/{user_id}", headers=_ADMIN_HEADERS).status_code == 204
@@ -405,6 +491,7 @@ class TestUserAdmin:
 # Audit log endpoint
 # ---------------------------------------------------------------------------
 
+
 class TestAuditLog:
     def test_audit_returns_list(self, client):
         r = client.get("/audit", headers=_ADMIN_HEADERS)
@@ -412,30 +499,41 @@ class TestAuditLog:
         assert isinstance(r.json(), list)
 
     def test_audit_filter_by_user(self, client, registered_user):
-        client.post("/query", json={
-            "query": "filter test",
-            "slack_user_id": registered_user,
-        })
+        client.post(
+            "/query",
+            json={
+                "query": "filter test",
+                "slack_user_id": registered_user,
+            },
+        )
         r = client.get(f"/audit?slack_user_id={registered_user}", headers=_ADMIN_HEADERS)
         assert r.status_code == 200
         assert all(e["slack_user_id"] == registered_user for e in r.json())
 
     def test_audit_limit(self, client, registered_user):
         for i in range(4):
-            client.post("/query", json={
-                "query": f"limit test {i}",
-                "slack_user_id": registered_user,
-            })
+            client.post(
+                "/query",
+                json={
+                    "query": f"limit test {i}",
+                    "slack_user_id": registered_user,
+                },
+            )
         r = client.get("/audit?limit=2", headers=_ADMIN_HEADERS)
         assert len(r.json()) <= 2
 
     def test_audit_entry_has_latency_fields(self, client, registered_user):
-        client.post("/query", json={
-            "query": "latency check",
-            "slack_user_id": registered_user,
-        })
-        logs = client.get(f"/audit?slack_user_id={registered_user}&limit=5", headers=_ADMIN_HEADERS).json()
-        entry = next((l for l in logs if l["question"] == "latency check"), None)
+        client.post(
+            "/query",
+            json={
+                "query": "latency check",
+                "slack_user_id": registered_user,
+            },
+        )
+        logs = client.get(
+            f"/audit?slack_user_id={registered_user}&limit=5", headers=_ADMIN_HEADERS
+        ).json()
+        entry = next((log for log in logs if log["question"] == "latency check"), None)
         assert entry is not None
         assert entry["total_ms"] == 210
         assert entry["prompt_tokens"] == 500

@@ -12,9 +12,10 @@ the rewrite produces
   WHERE (department_id = 3 OR 1=1) AND department_id = 3
 which correctly restricts the result set to the user's department.
 """
+
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import sqlglot
 import sqlglot.expressions as exp
@@ -25,8 +26,13 @@ if TYPE_CHECKING:
     from core.rbac.context import RBACContext
 
 _BLOCKED_NODE_TYPES = (
-    exp.Insert, exp.Update, exp.Delete,
-    exp.Create, exp.Drop, exp.Alter, exp.TruncateTable,
+    exp.Insert,
+    exp.Update,
+    exp.Delete,
+    exp.Create,
+    exp.Drop,
+    exp.Alter,
+    exp.TruncateTable,
 )
 
 # Tables that carry employee data via a direct person_id FK.  When one of
@@ -34,24 +40,28 @@ _BLOCKED_NODE_TYPES = (
 # injected on the table itself — otherwise restricted roles could read
 # company-wide data (e.g. SELECT * FROM leave_record) with no person
 # reference for the guard to anchor on.
-_PERSON_FK_TABLES = frozenset({
-    "person_team",
-    "leave_record",
-    "person_week_log",
-    "person_competency",
-    "person_skill_category",
-    "users_personresignation",
-    "core_personstatushistory",
-    "core_personemploymenthistory",
-    "core_personemploymenttypehistory",
-    "person_leave_limit",
-})
+_PERSON_FK_TABLES = frozenset(
+    {
+        "person_team",
+        "leave_record",
+        "person_week_log",
+        "person_competency",
+        "person_skill_category",
+        "users_personresignation",
+        "core_personstatushistory",
+        "core_personemploymenthistory",
+        "core_personemploymenttypehistory",
+        "person_leave_limit",
+    }
+)
 
 # Tables linked to a person indirectly through person_team_id.
-_PERSON_TEAM_FK_TABLES = frozenset({
-    "person_week_project",
-    "annual_review_response",
-})
+_PERSON_TEAM_FK_TABLES = frozenset(
+    {
+        "person_week_project",
+        "annual_review_response",
+    }
+)
 
 # Lookup/reference tables that hold no per-person employee data, so restricted
 # roles may read them company-wide (department names, leave types, holidays,
@@ -59,23 +69,25 @@ _PERSON_TEAM_FK_TABLES = frozenset({
 # person-linked (the two sets above), nor listed here is treated as
 # unclassified: for restricted roles the guard fails closed rather than risk
 # leaking an unscoped person-bearing table added to INCLUDED_TABLES later.
-_PERSON_FREE_TABLES = frozenset({
-    "department",
-    "team",
-    "designation",
-    "employment_type",
-    "leave_type",
-    "leave_limit",
-    "holiday_record",
-    "competency_role",
-    "competency",
-    "competency_level",
-    "skill_category",
-    "job_requisition",
-})
+_PERSON_FREE_TABLES = frozenset(
+    {
+        "department",
+        "team",
+        "designation",
+        "employment_type",
+        "leave_type",
+        "leave_limit",
+        "holiday_record",
+        "competency_role",
+        "competency",
+        "competency_level",
+        "skill_category",
+        "job_requisition",
+    }
+)
 
 
-def rewrite_sql(sql: str, rbac_ctx: Optional["RBACContext"]) -> str:
+def rewrite_sql(sql: str, rbac_ctx: RBACContext | None) -> str:
     """
     Parse sql, reject non-SELECT statements and forbidden-column references,
     then inject scope predicates into every SELECT node that references the
@@ -102,16 +114,12 @@ def rewrite_sql(sql: str, rbac_ctx: Optional["RBACContext"]) -> str:
         if stmt is None:
             continue
         if not isinstance(stmt, (exp.Select, exp.Union, exp.Intersect, exp.Except, exp.With)):
-            raise ValueError(
-                f"Non-SELECT statement blocked by scope guard: {type(stmt).__name__}"
-            )
+            raise ValueError(f"Non-SELECT statement blocked by scope guard: {type(stmt).__name__}")
         # CTEs can embed DML (e.g. WITH x AS (DELETE ... RETURNING ...) SELECT ...).
         # sqlglot parses these as exp.With, passing the isinstance check above, so
         # we must also walk the tree and reject any DML/DDL node found anywhere.
         for bad in stmt.find_all(*_BLOCKED_NODE_TYPES):
-            raise ValueError(
-                f"Non-SELECT statement blocked by scope guard: {type(bad).__name__}"
-            )
+            raise ValueError(f"Non-SELECT statement blocked by scope guard: {type(bad).__name__}")
         # All table names/aliases in the statement — used to detect whole-row
         # references below.
         table_names = set()
@@ -128,9 +136,7 @@ def rewrite_sql(sql: str, rbac_ctx: Optional["RBACContext"]) -> str:
         for column in stmt.find_all(exp.Column):
             name = (column.name or "").lower()
             if name in FORBIDDEN_COLUMNS:
-                raise ValueError(
-                    f"Forbidden column blocked by scope guard: {column.name}"
-                )
+                raise ValueError(f"Forbidden column blocked by scope guard: {column.name}")
             if not column.table and name in table_names:
                 raise ValueError(
                     f"Whole-row reference blocked by scope guard: '{column.name}'. "
@@ -164,7 +170,8 @@ def rewrite_sql(sql: str, rbac_ctx: Optional["RBACContext"]) -> str:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _inject_scope_into_tree(tree: exp.Expression, rbac_ctx: "RBACContext") -> None:
+
+def _inject_scope_into_tree(tree: exp.Expression, rbac_ctx: RBACContext) -> None:
     # Materialise before mutating — injected predicates contain their own
     # SELECT subqueries, which a live find_all() generator would re-visit
     # and re-scope.
@@ -210,7 +217,7 @@ def _select_tables(select: exp.Select) -> list[exp.Table]:
     return tables
 
 
-def _person_alias(select: exp.Select) -> Optional[str]:
+def _person_alias(select: exp.Select) -> str | None:
     """Return the alias (or bare name) used for the person table in this SELECT.
 
     Only inspects the immediate FROM/JOIN table references — not descendants.
@@ -224,7 +231,7 @@ def _person_alias(select: exp.Select) -> Optional[str]:
     return None
 
 
-def _scope_sql(rbac_ctx: "RBACContext", person_alias: str) -> Optional[str]:
+def _scope_sql(rbac_ctx: RBACContext, person_alias: str) -> str | None:
     role = rbac_ctx.role.value
 
     if role == "dept_head":
@@ -249,7 +256,7 @@ def _scope_sql(rbac_ctx: "RBACContext", person_alias: str) -> Optional[str]:
     return "1 = 0"
 
 
-def _scoped_person_ids_sql(rbac_ctx: "RBACContext") -> Optional[str]:
+def _scoped_person_ids_sql(rbac_ctx: RBACContext) -> str | None:
     """Subquery yielding the person ids visible to this restricted role,
     or None when the role is misconfigured (caller must deny all)."""
     role = rbac_ctx.role.value
@@ -271,21 +278,19 @@ def _scoped_person_ids_sql(rbac_ctx: "RBACContext") -> Optional[str]:
     return None
 
 
-def _fk_scope_sql(rbac_ctx: "RBACContext", alias: str, fk_column: str) -> str:
+def _fk_scope_sql(rbac_ctx: RBACContext, alias: str, fk_column: str) -> str:
     person_ids = _scoped_person_ids_sql(rbac_ctx)
     if person_ids is None:
         return "1 = 0"
     return f"{alias}.{fk_column} IN ({person_ids})"
 
 
-def _person_team_fk_scope_sql(rbac_ctx: "RBACContext", alias: str) -> str:
+def _person_team_fk_scope_sql(rbac_ctx: RBACContext, alias: str) -> str:
     person_ids = _scoped_person_ids_sql(rbac_ctx)
     if person_ids is None:
         return "1 = 0"
     return (
-        f"{alias}.person_team_id IN ("
-        f"SELECT id FROM person_team WHERE person_id IN ({person_ids})"
-        f")"
+        f"{alias}.person_team_id IN (SELECT id FROM person_team WHERE person_id IN ({person_ids}))"
     )
 
 

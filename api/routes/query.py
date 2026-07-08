@@ -1,5 +1,3 @@
-from typing import Optional
-
 from fastapi import APIRouter, Depends
 
 from api.deps import require_admin_unless_open
@@ -13,7 +11,7 @@ router = APIRouter()
 @router.post("/query", response_model=QueryResponse)
 def run_query(
     body: QueryRequest,
-    admin: Optional[AdminUser] = Depends(require_admin_unless_open),
+    admin: AdminUser | None = Depends(require_admin_unless_open),
 ):
     """
     Natural-language HR query endpoint.

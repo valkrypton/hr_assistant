@@ -12,27 +12,27 @@ Schedule example (cron, runs at 2 AM every night):
     0 2 * * * /path/to/.venv/bin/python /path/to/hr_assistant/scripts/reindex.py
 """
 
-import logging
 import sys
 import time
 from pathlib import Path
 
+import structlog
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-)
-logger = logging.getLogger("reindex")
+from core.logging import configure_logging  # noqa: E402
+
+configure_logging()
+logger = structlog.get_logger("reindex")
 
 
 def main() -> None:
     from core.vector_index import build_index
-    logger.info("Rebuilding ERP content index (hr_erp)...")
+
+    logger.info("reindex_started")
     t0 = time.monotonic()
     build_index()
-    logger.info("ERP index done in %.1fs.", time.monotonic() - t0)
-    logger.info("All done.")
+    logger.info("reindex_finished", duration_s=round(time.monotonic() - t0, 1))
 
 
 if __name__ == "__main__":

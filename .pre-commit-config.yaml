@@ -1,0 +1,57 @@
+# Pre-commit hook configuration.
+#
+# Install once per clone:
+#     uv sync
+#     uv run pre-commit install --install-hooks --hook-type pre-commit --hook-type pre-push
+#
+# Hooks split:
+#   - pre-commit  (fast, on every commit): formatting + lint-fix for staged files.
+#   - pre-push    (slower, before code leaves the machine): unit tests.
+
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  # -------- Python: ruff format + ruff check --fix --------
+  # Keep the `rev:` aligned with pyproject.toml's `ruff>=0.15,<0.16` so the
+  # hook and `uv run ruff` (used by local dev) can never disagree on rules.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.13
+    hooks:
+      - id: ruff-format
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+
+  # -------- Tiny built-ins (no-cost insurance) --------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+
+  # -------- Local hook: enforce migration naming convention --------
+  - repo: local
+    hooks:
+      - id: migration-naming-check
+        name: Migrations follow NNNN_slug convention
+        entry: bash scripts/check_migration_naming.sh
+        language: system
+        # Only fires when a file under migrations/versions/ is staged.
+        files: ^migrations/versions/.*\.py$
+        pass_filenames: true
+
+  # -------- Pre-push: unit tests --------
+  # Slow step lives here so commits stay fast. Runs once before `git push`
+  # actually sends commits to the remote.
+  - repo: local
+    hooks:
+      - id: pytest
+        name: Unit tests (pytest)
+        entry: bash -c 'uv run pytest --no-cov -q'
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true

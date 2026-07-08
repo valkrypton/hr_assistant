@@ -1,6 +1,6 @@
 import json
-import logging
 
+import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -8,7 +8,7 @@ from adapters.slack import process_event, verify_signature
 from core.config import settings
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 @router.post("/webhook/slack")
@@ -44,7 +44,7 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
         request_body=raw_body,
         slack_signature=signature,
     ):
-        logger.warning("Slack signature verification failed — ts=%s", timestamp)
+        logger.warning("slack_signature_verification_failed", timestamp=timestamp)
         raise HTTPException(status_code=403, detail="Invalid Slack signature.")
 
     # Step 3: Handle url_verification challenge after signature check.

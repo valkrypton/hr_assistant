@@ -3,6 +3,7 @@ Business logic for POST /query — RBAC resolution, agent invocation, and
 audit logging. Auth (require_admin_unless_open) stays in api/routes/query.py
 since it's a FastAPI dependency, not domain logic.
 """
+
 from fastapi import HTTPException
 
 from api.deps import check_rate_limit, db_session, write_audit

@@ -11,6 +11,7 @@ class Role(str, Enum):
       DEPT_HEAD     — own department only
       TEAM_LEAD     — own team only (member names, skills, availability, projects)
     """
+
     CTO_CEO = "cto_ceo"
     HR_MANAGER = "hr_manager"
     DEPT_HEAD = "dept_head"

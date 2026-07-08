@@ -1,4 +1,5 @@
 from langchain_core.language_models import BaseChatModel
+
 from core.config import settings
 
 
@@ -7,6 +8,7 @@ def get_llm() -> BaseChatModel:
 
     if provider == "ollama":
         from langchain_ollama import ChatOllama
+
         return ChatOllama(
             base_url=settings.OLLAMA_BASE_URL,
             model=settings.OLLAMA_MODEL,
@@ -14,6 +16,7 @@ def get_llm() -> BaseChatModel:
 
     if provider == "openai":
         from langchain_openai import ChatOpenAI
+
         return ChatOpenAI(
             api_key=settings.OPENAI_API_KEY,
             model=settings.OPENAI_MODEL,
@@ -21,6 +24,7 @@ def get_llm() -> BaseChatModel:
 
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
+
         return ChatAnthropic(
             api_key=settings.ANTHROPIC_API_KEY,
             model_name=settings.ANTHROPIC_MODEL,
@@ -29,6 +33,7 @@ def get_llm() -> BaseChatModel:
     # xAI (Grok) exposes an OpenAI-compatible endpoint
     if provider == "xai":
         from langchain_openai import ChatOpenAI
+
         return ChatOpenAI(
             api_key=settings.XAI_API_KEY,
             model=settings.XAI_MODEL,
@@ -38,6 +43,7 @@ def get_llm() -> BaseChatModel:
     # QWEN (Alibaba) exposes an OpenAI-compatible endpoint
     if provider == "qwen":
         from langchain_openai import ChatOpenAI
+
         return ChatOpenAI(
             api_key=settings.QWEN_API_KEY,
             model=settings.QWEN_MODEL,
@@ -45,6 +51,7 @@ def get_llm() -> BaseChatModel:
         )
     if provider == "librechat":
         from langchain_openai import ChatOpenAI
+
         return ChatOpenAI(
             api_key=settings.LIBRECHAT_API_KEY,
             model=settings.LIBRECHAT_MODEL,
