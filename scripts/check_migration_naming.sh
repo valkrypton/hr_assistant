@@ -36,7 +36,7 @@ for path in "$@"; do
   expected_rev=${base%.py}
 
   actual_rev=$(grep -E '^revision[[:space:]:][^=]*=' "$path" \
-    | sed -E 's/^revision[^=]*=[[:space:]]*"([^"]+)".*/\1/' \
+    | sed -E "s/^revision[^=]*=[[:space:]]*['\"]([^'\"]+)['\"].*/\1/" \
     | head -n1 || true)
 
   if [ -z "$actual_rev" ]; then

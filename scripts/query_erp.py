@@ -13,13 +13,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import sqlalchemy
+from sqlalchemy.engine import make_url
 
 from core.config import settings
 
+_engine = sqlalchemy.create_engine(settings.DATABASE_URL)
+
 
 def run(sql: str) -> None:
-    engine = sqlalchemy.create_engine(settings.DATABASE_URL)
-    with engine.connect() as conn:
+    with _engine.connect() as conn:
         result = conn.execute(sqlalchemy.text(sql))
         if not result.returns_rows:
             print(f"OK — {result.rowcount} row(s) affected")
@@ -37,7 +39,8 @@ def main() -> None:
         run(" ".join(sys.argv[1:]))
         return
 
-    print(f"Connected to {settings.DATABASE_URL} — enter SQL, empty line to quit.")
+    _safe_url = make_url(settings.DATABASE_URL).render_as_string(hide_password=True)
+    print(f"Connected to {_safe_url} — enter SQL, empty line to quit.")
     while True:
         try:
             sql = input("sql> ").strip()
