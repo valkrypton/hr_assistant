@@ -26,12 +26,12 @@ import structlog
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
-from core.agent import query as agent_query
 from core.config import settings
 from core.db import db_session
 from core.identity.context import AgentContext
 from core.identity.resolver import lookup_hr_user
 from core.rate_limit import count_recent_queries
+from core.runtimes import AgentRunRequest, get_runtime
 from core.telemetry.audit import write_audit
 
 logger = structlog.get_logger(__name__)
@@ -297,9 +297,17 @@ def process_event(
     history_fetch_ms = int((time.monotonic() - t_history) * 1000)
 
     try:
-        result = agent_query(
-            text, rbac_ctx=rbac_ctx, conversation_history=conversation_history or None
+        result = get_runtime().run(
+            AgentRunRequest(
+                question=text,
+                rbac_ctx=rbac_ctx,
+                conversation_history=conversation_history or None,
+            )
         )
+        # Security-validation step: redact forbidden-column values (the runtime
+        # returns the raw model answer; redaction lives outside the runtime so
+        # every runtime is covered — see core.execution for the API path).
+        result.answer = rbac_ctx.strip_forbidden(result.answer)
 
         t_post = time.monotonic()
         client.chat_postMessage(

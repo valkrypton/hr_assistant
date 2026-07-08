@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     # AI Provider: ollama | openai | anthropic | xai | qwen | librechat
     AI_PROVIDER: str = "ollama"
 
+    # Agent runtime backend: legacy (langchain create_sql_agent) | langgraph.
+    # Default stays "legacy" until the LangGraph runtime is signed off.
+    AGENT_RUNTIME: str = "legacy"
+
     # Ollama
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3.2"

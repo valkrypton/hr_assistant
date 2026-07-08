@@ -412,9 +412,9 @@ def query(
     answer = result.get("output", str(result))
     tables_accessed = _extract_tables(result.get("intermediate_steps", []))
 
-    # Step 4: Redact forbidden columns
-    if rbac_ctx is not None:
-        answer = rbac_ctx.strip_forbidden(answer)
+    # Forbidden-column redaction is applied by the execution pipeline
+    # (core.execution) / the Slack orchestration as an explicit, runtime-agnostic
+    # security-validation step, so every runtime redacts in exactly one place.
 
     total_ms = int((time.monotonic() - t_total_start) * 1000)
 

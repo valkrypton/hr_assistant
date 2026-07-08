@@ -22,11 +22,11 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from api.admin import AuditLogAdmin, HRUserAdmin
 from api.deps import app_engine
 from api.routes import audit, health, query, slack, users
-from core.agent import get_agent
 from core.auth import verify_password
 from core.config import settings
 from core.logging import configure_logging
 from core.rbac.models import AdminUser, Base
+from core.runtimes import get_runtime
 
 configure_logging()
 
@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
         # create_all() there can leave tables without an alembic_version,
         # causing later migrations to fail or drift.
         Base.metadata.create_all(app_engine())
-    get_agent()  # warm up the shared unrestricted agent on startup
+    get_runtime().warmup()  # warm up the shared unrestricted agent on startup
     yield
 
 

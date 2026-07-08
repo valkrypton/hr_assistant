@@ -236,7 +236,7 @@ class TestQueryAuthenticated:
         assert entry["total_tokens"] == 600
 
     def test_audit_log_written_on_error(self, client, registered_user):
-        with patch("api.services.query_service.agent_query", side_effect=RuntimeError("DB down")):
+        with patch("core.agent.query", side_effect=RuntimeError("DB down")):
             r = client.post(
                 "/query",
                 json={
@@ -374,15 +374,7 @@ class TestRateLimit:
                 )
             session.commit()
 
-        with (
-            patch("api.deps.settings.RATE_LIMIT_PER_HOUR", limit),
-            patch(
-                "api.services.query_service.check_rate_limit",
-                side_effect=__import__("fastapi").HTTPException(
-                    status_code=429, detail="Rate limit exceeded"
-                ),
-            ),
-        ):
+        with patch("api.deps.settings.RATE_LIMIT_PER_HOUR", limit):
             r = client.post(
                 "/query",
                 json={
