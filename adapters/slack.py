@@ -6,7 +6,7 @@ Responsibilities
 - Verify X-Slack-Signature on every inbound request (HMAC-SHA256).
 - Handle the URL-verification challenge sent during app setup.
 - Parse app_mention and message.im events to extract user + text.
-- Look up the HRUser for the Slack user ID and build an RBACContext.
+- Look up the HRUser for the Slack user ID and build an AgentContext.
 - Call core.agent.query() and post the answer as a Block Kit card in-thread.
 
 Slack's 3-second rule
@@ -25,14 +25,13 @@ import time
 import structlog
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-from sqlalchemy.orm import Session
 
 from core.agent import query as agent_query
 from core.config import settings
 from core.db import db_session
+from core.identity.context import AgentContext
+from core.identity.resolver import lookup_hr_user
 from core.rate_limit import count_recent_queries
-from core.rbac.context import RBACContext
-from core.rbac.models import HRUser
 from core.telemetry.audit import write_audit
 
 logger = structlog.get_logger(__name__)
@@ -115,15 +114,6 @@ def _format_blocks(answer: str) -> list[dict]:
             ],
         },
     ]
-
-
-# ---------------------------------------------------------------------------
-# DB helpers
-# ---------------------------------------------------------------------------
-
-
-def _lookup_user(session: Session, slack_user_id: str) -> HRUser | None:
-    return session.query(HRUser).filter_by(slack_user_id=slack_user_id, is_active=True).first()
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +224,7 @@ def process_event(
     # agent call alone can take up to ~15s).
     t_lookup = time.monotonic()
     with db_session() as session:
-        hr_user = _lookup_user(session, slack_user_id)
+        hr_user = lookup_hr_user(session, slack_user_id)
         user_lookup_ms = int((time.monotonic() - t_lookup) * 1000)
 
         rate_check_ms = 0
@@ -268,9 +258,10 @@ def process_event(
             pass
         return
 
-    rbac_ctx = RBACContext.for_user(hr_user)
-    employee_id = hr_user.employee_id
-    role = hr_user.role
+    ctx = AgentContext.for_user(hr_user, slack_user_id=slack_user_id)
+    rbac_ctx = ctx.rbac
+    employee_id = ctx.employee_id
+    role = ctx.role.value
 
     # Rate limit check (count was already fetched above) — post a friendly
     # message and bail if exceeded.

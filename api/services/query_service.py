@@ -9,8 +9,8 @@ from fastapi import HTTPException
 from api.deps import check_rate_limit, db_session, write_audit
 from api.schemas.query import QueryRequest, QueryResponse
 from core.agent import query as agent_query
-from core.rbac.context import RBACContext
-from core.rbac.models import HRUser
+from core.errors import MissingRole, UserNotRegistered
+from core.identity.resolver import resolve
 
 
 def run_query(body: QueryRequest) -> QueryResponse:
@@ -21,30 +21,22 @@ def run_query(body: QueryRequest) -> QueryResponse:
     employee_id = None
     role = None
 
-    # DB work (rate-limit check + user lookup) is scoped to its own short
-    # session — deliberately NOT held open across the agent_query() call
+    # DB work (rate-limit check + identity resolution) is scoped to its own
+    # short session — deliberately NOT held open across the agent_query() call
     # below, which can take up to ~15s. Holding one session for the whole
     # request would tie up a pool connection for that entire span instead of
     # just the few DB round-trips that actually need it.
     if body.slack_user_id:
-        with db_session() as session:
-            check_rate_limit(session, body.slack_user_id)
+        try:
+            with db_session() as session:
+                check_rate_limit(session, body.slack_user_id)
+                ctx = resolve(session, body.slack_user_id)
+        except (UserNotRegistered, MissingRole) as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-            hr_user = (
-                session.query(HRUser)
-                .filter_by(slack_user_id=body.slack_user_id, is_active=True)
-                .first()
-            )
-
-        if not hr_user:
-            raise HTTPException(
-                status_code=403,
-                detail="User not registered. Ask your HR admin to add your Slack account.",
-            )
-
-        rbac_ctx = RBACContext.for_user(hr_user)
-        employee_id = hr_user.employee_id
-        role = hr_user.role
+        rbac_ctx = ctx.rbac
+        employee_id = ctx.employee_id
+        role = ctx.role.value
 
     try:
         result = agent_query(body.query, rbac_ctx=rbac_ctx)

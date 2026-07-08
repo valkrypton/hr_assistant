@@ -27,6 +27,12 @@ def can(subject: Role | object, action: str) -> bool:
     return any(p.endswith(".*") and action.startswith(p[:-1]) for p in perms)
 
 
+def permissions_for(subject: Role | object) -> frozenset[str]:
+    """The full permission set held by the subject's role (empty if unknown).
+    Used to materialize AgentContext.permissions once at construction."""
+    return ROLE_PERMISSIONS.get(_role_of(subject), frozenset())
+
+
 def scope_for(subject: Role | object) -> str:
     """Data-scope tier for the subject: "company", "department", "team", or
     "none". Derived from the permission set so ROLE_PERMISSIONS stays the single
