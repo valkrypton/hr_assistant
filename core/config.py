@@ -129,9 +129,9 @@ class Settings(BaseSettings):
 
         # Production guards. All keyed on DEBUG=false so local dev keeps its
         # zero-config defaults while a misconfigured prod deploy fails fast at
-        # startup instead of silently running insecure. Raw env vars are checked
-        # (not the post-fallback self.* values) so fallbacks don't mask a
-        # missing setting.
+        # startup instead of silently running insecure. Guards that have a
+        # fallback (SECRET_KEY, APP_DATABASE_URL) check the raw env var, not the
+        # post-fallback self.* value, so the fallback can't mask a missing setting.
         if not self.DEBUG:
             raw_secret_key = os.getenv("SECRET_KEY", "")
             if not raw_secret_key:
@@ -157,7 +157,7 @@ class Settings(BaseSettings):
 
             # APP_DATABASE_URL must be set explicitly in production (see the
             # no-fallback note above). Silently defaulting to a local sqlite file
-            # would split audit/users state per worker and lose it on redeploy.
+            # would split app state per worker and lose it on redeploy.
             if not os.getenv("APP_DATABASE_URL"):
                 raise RuntimeError(
                     "APP_DATABASE_URL is not set. It must point at the writable app "
@@ -165,11 +165,21 @@ class Settings(BaseSettings):
                     "DATABASE_URL)."
                 )
 
-            # A wildcard CORS origin should never ship to production; require an
-            # explicit allowlist.
-            if self.CORS_ALLOW_ORIGINS == ["*"]:
+            # Even when set explicitly, the writable app DB must not be the same
+            # connection as the read-only ERP — that would expose hr_admin_users
+            # (password hashes) to the SQL agent.
+            if os.getenv("APP_DATABASE_URL") == os.getenv("DATABASE_URL"):
                 raise RuntimeError(
-                    "CORS_ALLOW_ORIGINS='*' is not allowed when DEBUG is false. "
+                    "APP_DATABASE_URL must not equal DATABASE_URL. The writable app "
+                    "database must be a separate connection from the read-only ERP."
+                )
+
+            # A wildcard CORS origin should never ship to production; require an
+            # explicit allowlist. Catch "*" anywhere in the list — Starlette
+            # treats a single "*" element as allow-all.
+            if "*" in self.CORS_ALLOW_ORIGINS:
+                raise RuntimeError(
+                    "CORS_ALLOW_ORIGINS must not contain '*' when DEBUG is false. "
                     "Set an explicit comma-separated list of frontend origins."
                 )
 

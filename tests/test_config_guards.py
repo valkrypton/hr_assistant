@@ -69,12 +69,35 @@ class TestProdGuards:
         monkeypatch.setenv("DEBUG", "false")
         monkeypatch.setenv("SECRET_KEY", "a-strong-non-placeholder-secret")
         monkeypatch.setenv("APP_DATABASE_URL", "postgres://app")
+        monkeypatch.setenv("DATABASE_URL", "postgres://erp")
         monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://example.com")
 
         settings = Settings(_env_file=None)
 
         assert settings.APP_DATABASE_URL == "postgres://app"
         assert settings.CORS_ALLOW_ORIGINS == ["https://example.com"]
+
+    def test_wildcard_cors_in_multi_origin_list_raises(self, monkeypatch):
+        _clear_guarded_env(monkeypatch)
+        monkeypatch.setenv("DEBUG", "false")
+        monkeypatch.setenv("SECRET_KEY", "a-strong-non-placeholder-secret")
+        monkeypatch.setenv("APP_DATABASE_URL", "postgres://app")
+        monkeypatch.setenv("DATABASE_URL", "postgres://erp")
+        monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://app.example.com,*")
+
+        with pytest.raises(RuntimeError, match="CORS_ALLOW_ORIGINS"):
+            Settings(_env_file=None)
+
+    def test_app_database_url_equal_to_database_url_raises(self, monkeypatch):
+        _clear_guarded_env(monkeypatch)
+        monkeypatch.setenv("DEBUG", "false")
+        monkeypatch.setenv("SECRET_KEY", "a-strong-non-placeholder-secret")
+        monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://example.com")
+        monkeypatch.setenv("APP_DATABASE_URL", "postgres://same-db")
+        monkeypatch.setenv("DATABASE_URL", "postgres://same-db")
+
+        with pytest.raises(RuntimeError, match="APP_DATABASE_URL must not equal DATABASE_URL"):
+            Settings(_env_file=None)
 
 
 class TestDevFallbacks:

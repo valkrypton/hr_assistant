@@ -40,8 +40,10 @@ _BLOCKED_NODE_TYPES = (
 # string literal the parser never inspects), read the filesystem/network, or
 # enable denial of service. sqlglot parses all of these as exp.Anonymous, so a
 # name denylist over Anonymous nodes catches them without touching legitimate
-# typed functions (COUNT, AVG, DATE_TRUNC, ...). Defense-in-depth: the primary
-# control is a least-privilege read-only ERP DB role that cannot reach these.
+# typed functions (COUNT, AVG, DATE_TRUNC, ...). This is DEFENSE IN DEPTH and is
+# necessarily incomplete — Postgres/extensions keep adding functions. The
+# PRIMARY control must be a least-privilege read-only ERP DB role with EXECUTE
+# revoked on these; the denylist is a backstop, not the boundary.
 _BLOCKED_FUNCTIONS = frozenset(
     {
         # execute a SQL string with caller privileges
@@ -52,16 +54,24 @@ _BLOCKED_FUNCTIONS = frozenset(
         "dblink_exec",
         "dblink_open",
         "dblink_fetch",
+        "dblink_connect",
         "dblink_send_query",
+        "dblink_get_result",
         # filesystem / large-object access
         "pg_read_file",
         "pg_read_binary_file",
         "pg_ls_dir",
         "pg_ls_logdir",
         "pg_ls_waldir",
+        "pg_ls_tmpdir",
+        "pg_ls_archive_statusdir",
+        "pg_ls_logicalsnapdir",
+        "pg_ls_logicalmapdir",
+        "pg_ls_replslotdir",
         "pg_stat_file",
         "lo_import",
         "lo_export",
+        "lo_get",
         # denial of service
         "pg_sleep",
         "pg_sleep_for",

@@ -28,6 +28,13 @@ DANGEROUS_FUNCTION_CALLS = [
     "SELECT lo_import('/etc/passwd')",
 ]
 
+NEWLY_BLOCKED_FUNCTION_CALLS = [
+    "SELECT lo_get(16385)",
+    "SELECT pg_ls_tmpdir('base/pgsql_tmp')",
+    "SELECT dblink_get_result('c')",
+    "SELECT dblink_connect('x','y')",
+]
+
 
 class TestDangerousFunctionsBlockedForAllRoles:
     @pytest.mark.parametrize("ctx_name", list(CONTEXTS))
@@ -36,6 +43,11 @@ class TestDangerousFunctionsBlockedForAllRoles:
         ctx = CONTEXTS[ctx_name]
         with pytest.raises(ValueError, match="Function blocked by scope guard"):
             rewrite_sql(sql, ctx)
+
+    @pytest.mark.parametrize("sql", NEWLY_BLOCKED_FUNCTION_CALLS)
+    def test_newly_blocked_function_call_raises_for_superuser(self, sql):
+        with pytest.raises(ValueError, match="Function blocked by scope guard"):
+            rewrite_sql(sql, CONTEXTS["superuser"])
 
     @pytest.mark.parametrize("ctx_name", list(CONTEXTS))
     def test_schema_qualified_call_raises(self, ctx_name):
