@@ -31,23 +31,39 @@ The API is at `http://localhost:8000`. Interactive docs at `/docs`.
 
 ## Architecture
 
-The project is split into two packages that must never have circular imports:
+The project is split into two packages that must never have circular imports;
+`adapters/` (messaging) may import `core/` but never `api/`:
 
 ```
-core/   — AI agent logic, zero dependency on api/
+core/   — domain logic, zero dependency on api/
+  execution.py — the query pipeline both api/ and adapters/ call
+  db.py        — shared engines (app_engine, erp_engine) + db_session
+  errors.py    — typed domain errors (UserNotRegistered, MissingRole, RateLimitExceeded, …)
+  identity/    — AgentContext (wraps RBACContext) + resolver (Slack id → context)
+  policies/    — permission layer: can(subject, action) / scope_for over ROLE_PERMISSIONS
+  tools/       — Tool spec + registry; guarded query_erp_sql + typed tools (team/leave/joiners)
+  runtimes/    — AgentRuntime interface; legacy (create_sql_agent) + langgraph implementations
+  telemetry/   — write_audit + observability_fields
+  rbac/        — RBACContext, sql_guard (scope enforcement), roles, models
+  agent.py     — the legacy create_sql_agent path (wrapped by runtimes/legacy.py)
 api/    — FastAPI HTTP layer, imports from core only
   routes/    — thin HTTP handlers: parse request → call a services/ function → map to a schemas/ response
-  services/  — business logic (RBAC resolution, DB queries, audit writes) — one module per route file
+  services/  — thin: call core.execution, map core errors to HTTP status codes
   schemas/   — Pydantic request/response models — one module per route file
-  deps.py    — auth dependencies (require_admin, require_admin_unless_open) and DbDep,
-               the typed DB-session dependency (one Session per request, injected via
-               Depends). Routes with a slow call in the middle (e.g. /query's LLM agent
-               call, which can take ~15s) use db_session() directly in short scopes
-               instead of DbDep, so a pool connection isn't held open across it.
+  deps.py    — auth dependencies (require_admin, require_admin_unless_open), DbDep,
+               and re-exports of the shared core.db engines/session.
+adapters/ — messaging adapters (Slack); imports core/, never api/
 ```
 
+**Import boundaries** (enforced by `tests/test_architecture.py` once the legacy
+runtime is removed): `langchain`/`langgraph` imports live only in
+`core/runtimes/`, `core/providers/`, and `core/vector_index.py`.
+
 **Request flow:**
-`index.html` → `POST /query` (`api/routes/query.py` → `api/services/query_service.py`) → `core.agent.query()` → LangChain SQL agent → PostgreSQL
+`POST /query` (`api/routes/query.py` → `api/services/query_service.py`) →
+`core.execution.run_query()` (rate-limit → identity → runtime → redact → audit) →
+`get_runtime().run()` → SQL guard → PostgreSQL. The Slack adapter
+(`adapters/slack.py`) composes the same core steps around its own Slack I/O.
 
 **Key routes:**
 | Route | File | Purpose |
@@ -62,8 +78,25 @@ api/    — FastAPI HTTP layer, imports from core only
 **LLM provider selection** (`core/config.py` → `core/providers/factory.py`):
 `AI_PROVIDER` env var selects the backend. Ollama is the default. OpenAI-compatible providers (xAI/Grok, QWEN, LibreChat) reuse `langchain-openai` with a custom `base_url` — no extra packages needed.
 
-**SQL agent** (`core/agent.py`):
-Uses `langchain_community.agent_toolkits.create_sql_agent`. On each call to `query()` it instantiates a fresh agent (no shared state). Only tables listed in `INCLUDED_TABLES` (comma-separated env var) are visible to the agent — all others are hidden.
+**Agent runtimes** (`core/runtimes/`):
+The agent framework sits behind an `AgentRuntime` interface, selected by the
+`AGENT_RUNTIME` env var:
+- `legacy` (default) — `langchain_community.create_sql_agent` in `core/agent.py`;
+  `db.run` is monkey-patched through `sql_guard.rewrite_sql`.
+- `langgraph` — `langchain.agents.create_agent` in `core/runtimes/langgraph/`;
+  the model calls context-bound tools from the registry (scope comes from the
+  resolved identity, never LLM args). Gated on a golden-query comparison
+  (`scripts/compare_runtimes.py`) before becoming the default.
+
+Only tables listed in `INCLUDED_TABLES` (comma-separated env var) are visible to
+the SQL path.
+
+**Tools & permissions** (`core/tools/`, `core/policies/`):
+Business capabilities are `Tool`s that declare `required_permissions` and enforce
+them in the tool layer via `policy.can()` — never via the prompt. `query_erp_sql`
+is the guarded free-form escape hatch; typed tools (`team_roster`,
+`leave_lookup`, `joiners_summary`) encode non-discoverable business rules and run
+their SQL through the same guard, so scope is enforced once.
 
 **Database:**
 Two separate PostgreSQL connections:

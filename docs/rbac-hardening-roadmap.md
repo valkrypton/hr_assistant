@@ -96,6 +96,16 @@ RLS too — just enforced by Postgres. RLS tests need a real Postgres fixture
 
 ## Direction B — Constrain generation: typed tools / semantic layer
 
+**Status: in progress.** The hybrid landed — a tool layer (`core/tools/`) where
+each `Tool` declares `required_permissions` (enforced by `core/policies/`, not
+the prompt), plus the LangGraph runtime (`core/runtimes/langgraph/`) that binds
+each tool to the resolved `AgentContext` so scope comes from identity, never LLM
+args. The guarded free-form `query_erp_sql` tool remains for uncovered shapes;
+typed tools (`team_roster`, `leave_lookup`, `joiners_summary`) ship beside it and
+run through the same guard. Remaining: broaden the typed-tool set and, per the
+capability/lockdown tradeoff below, decide whether to eventually retire the
+free-form tool. The runtime cutover is gated on `scripts/compare_runtimes.py`.
+
 Don't let the LLM write raw SQL at all. It calls parameterized functions and
 picks *which* tool with *which* params; it never writes a `WHERE` clause.
 

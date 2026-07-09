@@ -3,7 +3,9 @@
 ## Implementation Progress
 
 Branch: `refactor/runtime-tools-security-hardening`. Full detail in
-`~/.claude/plans/glowing-mixing-twilight.md`. Suite: **362 passing**, ruff clean.
+`~/.claude/plans/glowing-mixing-twilight.md`. Suite: **381 passing, 1 skipped**,
+ruff clean. Only PR7 (the runtime cutover) remains — it is gated on running the
+golden-query comparison with a live LLM provider.
 
 **Decisions locked in:** migrate to LangGraph behind a runtime interface; keep the
 four existing roles (`cto_ceo`/`hr_manager`/`dept_head`/`team_lead`) and build a
@@ -57,13 +59,22 @@ PRs below.
 - [ ] **PR7 — Cutover + legacy removal** — flip default to `langgraph`; delete
   the legacy agent internals and `langchain-community`; add `test_architecture.py`
   enforcing the import boundaries.
-- [ ] **PR8 — First typed tools** — `team_roster` (#8), `leave_lookup` (#12),
-  `joiners_summary` (#13/#14/#15).
-- [ ] **PR9 — Observability + audit integrity** — audit columns
-  (`tools_used`/`sql_statements`/`model_name`/`rows_returned`) via Alembic;
-  audit #6 append-only enforcement (REVOKE UPDATE/DELETE) + SQLAdmin review.
-- [ ] **PR10 — Test-gap closure, guardrails, docs** — mis-listed-table leak test,
-  Slack `event_id` dedupe (audit #8), doc + diagram updates.
+- [x] **PR8 — First typed tools** (`8bd762b`, `55b75cb`) — `team_roster` (#8),
+  `leave_lookup` (#12), `joiners_summary` (#13/#14/#15); business rules in tested
+  code, scope via the shared guard.
+- [x] **PR9 — Observability + audit integrity** (`fddf62d`, `27ae0bb`) — audit
+  columns (`tools_used`/`sql_statements`/`model_name`/`rows_returned`) via Alembic
+  `0002`; audit #6 append-only via a Postgres BEFORE UPDATE/DELETE trigger.
+- [x] **PR10 — Test-gap closure, guardrails, docs** — Slack `event_id` dedupe
+  (audit #8), mis-listed-table leak test, AGENTS.md / roadmap updates.
+
+### Remaining
+
+- [ ] **PR7 — Cutover + legacy removal** — flip `AGENT_RUNTIME` default to
+  `langgraph`; delete the legacy agent internals + `langchain-community`; add
+  `tests/test_architecture.py` enforcing the import boundaries. **Gate:** run
+  `scripts/compare_runtimes.py` with a live LLM provider and human-review it
+  first.
 
 **Infra (not code), tracked alongside PR1:** provision a least-privilege
 read-only ERP DB role (SELECT-only on specific tables, no dangerous functions) —
