@@ -1,8 +1,8 @@
 """
 Shared dependencies for the API layer.
 
-Provides engine factories, the DB-session dependency, and the audit-log
-writer used across multiple routes.
+Provides engine factories and the DB-session dependency used across
+multiple routes.
 """
 
 from collections.abc import Iterator
@@ -17,8 +17,7 @@ from sqlalchemy.orm import Session
 
 from core.auth import hash_password, verify_password
 from core.config import settings
-from core.rate_limit import count_recent_queries
-from core.rbac.models import AdminUser, AuditLog
+from core.rbac.models import AdminUser
 
 _basic_auth = HTTPBasic(auto_error=False)
 
@@ -72,7 +71,7 @@ def require_admin_unless_open(
 
 @lru_cache(maxsize=1)
 def app_engine():
-    """Writable engine for our own tables (hr_assistant_users, audit logs, etc.)."""
+    """Writable engine for our own tables (hr_assistant_users, hr_admin_users)."""
     return sqlalchemy.create_engine(settings.APP_DATABASE_URL)
 
 
@@ -98,60 +97,3 @@ def get_db() -> Iterator[Session]:
 
 
 DbDep = Annotated[Session, Depends(get_db)]
-
-
-def check_rate_limit(session: Session, slack_user_id: str) -> None:
-    """
-    Raise HTTP 429 if the user has hit RATE_LIMIT_PER_HOUR queries in the
-    last 60 minutes. Uses the audit log as the source of truth — no extra
-    table needed. Set RATE_LIMIT_PER_HOUR=0 to disable.
-    """
-    limit = settings.RATE_LIMIT_PER_HOUR
-    if limit <= 0:
-        return
-
-    count = count_recent_queries(session, slack_user_id)
-
-    if count >= limit:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded — max {limit} queries per hour. Try again later.",
-        )
-
-
-def write_audit(
-    session: Session,
-    *,
-    slack_user_id: str | None,
-    employee_id: int | None,
-    role: str | None,
-    question: str,
-    answer: str | None = None,
-    tables_accessed: str | None = None,
-    error: str | None = None,
-    schema_rag_ms: int | None = None,
-    agent_ms: int | None = None,
-    total_ms: int | None = None,
-    prompt_tokens: int | None = None,
-    completion_tokens: int | None = None,
-    total_tokens: int | None = None,
-) -> None:
-    """Append one row to the audit log in the app DB (FR-6.1 / FR-6.2)."""
-    session.add(
-        AuditLog(
-            slack_user_id=slack_user_id,
-            employee_id=employee_id,
-            role=role,
-            question=question,
-            answer=answer,
-            tables_accessed=tables_accessed,
-            error=error,
-            schema_rag_ms=schema_rag_ms,
-            agent_ms=agent_ms,
-            total_ms=total_ms,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-        )
-    )
-    session.commit()

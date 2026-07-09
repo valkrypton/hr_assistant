@@ -84,19 +84,6 @@ The system can only **read** data. It cannot create, edit, or delete anything in
 Yes. Admins can access a management panel at `http://your-server/admin` to:
 
 - **Register users** — map an employee to their Slack account and assign them a role
-- **View the audit log** — see a full history of every question asked, who asked it, and which data was accessed
-
----
-
-## Audit trail
-
-Every question asked is logged automatically with:
-- Who asked it
-- When they asked it
-- What they asked
-- What data the system accessed to answer it
-
-This log cannot be edited or deleted, providing a permanent compliance record.
 
 ---
 

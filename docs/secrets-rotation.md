@@ -11,7 +11,6 @@ After rotating any secret:
 2. Restart the server: `uvicorn api.main:app --reload` (or restart the process manager)
 3. Verify: `GET /health` should return `{"status": "ok"}`
 4. Send a test query and confirm a response
-5. Check the audit log at `/admin` for any errors
 
 ---
 
@@ -78,7 +77,7 @@ Keeping the old key alive until after the restart ensures zero dropped requests.
 
 **ERP database (`DATABASE_URL`)** — read-only connection used by the SQL agent.
 
-**App database (`APP_DATABASE_URL`)** — writable connection used for users and audit logs.
+**App database (`APP_DATABASE_URL`)** — writable connection used for user management.
 
 **Downtime:** None if you follow the steps below. The server holds a connection pool; rotating without draining it will cause errors until restart.
 

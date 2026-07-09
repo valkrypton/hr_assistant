@@ -91,7 +91,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 ---
 
-### FR-6  Audit & Compliance
+### FR-6  Audit & Compliance *(removed — audit logging was implemented then removed; see `chore/remove-audit-and-rate-limit`)*
 
 | ID | Requirement |
 |----|-------------|
@@ -196,7 +196,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 **Tasks**
 - [x] Add query latency logging (SQL path vs AI-search path, total round-trip)
-- [x] Implement per-user rate limiting (configurable, default 30 queries/hour)
+- [x] ~~Implement per-user rate limiting (configurable, default 30 queries/hour)~~ *(removed)*
 - [x] Add AI token usage tracking per query; surface in audit log and admin panel
 - [x] Retry logic and graceful degradation: 3 attempts with exponential backoff, user-friendly error after exhaustion
 - [x] End-to-end test suite covering all 20 canonical query types (88 tests total)

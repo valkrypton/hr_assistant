@@ -159,7 +159,6 @@ curl -X POST https://your-server/users \
    @HR Assistant how many employees do we have?
    ```
 2. HR Assistant should reply in the thread within 15 seconds
-3. Check **http://your-server/admin** → **Audit Logs** to confirm the query was recorded
 
 ---
 
@@ -167,5 +166,4 @@ curl -X POST https://your-server/users \
 
 **Adding a new user:** Follow Step 8 above
 **Removing a user:** Go to the admin panel → HR Users → find the user → set **Is Active** to off
-**Viewing query history:** Go to **http://your-server/admin** → **Audit Logs**
 **Checking server health:** Visit **http://your-server/health** — should return `{"status": "ok"}`

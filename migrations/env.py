@@ -21,9 +21,9 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Read the DB URL from application settings (APP_DATABASE_URL — the writable
-# app DB that hosts hr_assistant_users / hr_assistant_audit) rather than the
-# static value in alembic.ini, so migrations always target whatever DB the
-# current environment is configured for.
+# app DB that hosts hr_assistant_users) rather than the static value in
+# alembic.ini, so migrations always target whatever DB the current environment
+# is configured for.
 config.set_main_option("sqlalchemy.url", settings.APP_DATABASE_URL)
 
 target_metadata = Base.metadata
