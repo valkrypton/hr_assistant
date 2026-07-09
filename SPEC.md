@@ -174,7 +174,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 - [ ] Implement `RBACContext` middleware in `core/`: injects allowed department/team scope into every SQL query and strips forbidden columns from results
 - [ ] Add role enforcement to the SQL agent prompt: inject a system prefix describing what the current user may and may not see
 - [ ] Write tests covering each role boundary (e.g. Team Lead cannot see another team's roster)
-- [ ] Implement the `/audit` log table and endpoint (FR-6)
+- [x] ~~Implement the `/audit` log table and endpoint (FR-6)~~ **❌ removed — see FR-6**
 
 **Exit criteria:** The same question asked by a Team Lead and an HR Manager returns correctly scoped results; salary/personal fields never appear in any response.
 
