@@ -30,9 +30,8 @@ from sqlalchemy.orm import Session
 
 from core.agent import query as agent_query
 from core.config import settings
-from core.rate_limit import count_recent_queries
 from core.rbac.context import RBACContext
-from core.rbac.models import AuditLog, HRUser
+from core.rbac.models import HRUser
 
 logger = structlog.get_logger(__name__)
 
@@ -148,51 +147,6 @@ def _lookup_user(session: Session, slack_user_id: str) -> HRUser | None:
     return session.query(HRUser).filter_by(slack_user_id=slack_user_id, is_active=True).first()
 
 
-def _write_audit(
-    session: Session,
-    *,
-    slack_user_id: str,
-    employee_id: int | None,
-    role: str | None,
-    question: str,
-    answer: str | None = None,
-    tables_accessed: str | None = None,
-    error: str | None = None,
-    schema_rag_ms: int | None = None,
-    agent_ms: int | None = None,
-    total_ms: int | None = None,
-    prompt_tokens: int | None = None,
-    completion_tokens: int | None = None,
-    total_tokens: int | None = None,
-    user_lookup_ms: int | None = None,
-    rate_check_ms: int | None = None,
-    history_fetch_ms: int | None = None,
-    slack_post_ms: int | None = None,
-) -> None:
-    session.add(
-        AuditLog(
-            slack_user_id=slack_user_id,
-            employee_id=employee_id,
-            role=role,
-            question=question,
-            answer=answer,
-            tables_accessed=tables_accessed,
-            error=error,
-            schema_rag_ms=schema_rag_ms,
-            agent_ms=agent_ms,
-            total_ms=total_ms,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            user_lookup_ms=user_lookup_ms,
-            rate_check_ms=rate_check_ms,
-            history_fetch_ms=history_fetch_ms,
-            slack_post_ms=slack_post_ms,
-        )
-    )
-    session.commit()
-
-
 # ---------------------------------------------------------------------------
 # Thread history  (FR: conversation continuity within a Slack thread)
 # ---------------------------------------------------------------------------
@@ -295,7 +249,7 @@ def process_event(
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     client = WebClient(token=settings.SLACK_BOT_TOKEN, ssl=ssl_ctx)
 
-    # Resolve identity and rate-limit count in one short-lived session,
+    # Resolve identity in one short-lived session,
     # closed before any Slack API call or the agent_query() call below —
     # neither should hold a pool connection idle for their duration (the
     # agent call alone can take up to ~15s).
@@ -303,13 +257,6 @@ def process_event(
     with _db_session() as session:
         hr_user = _lookup_user(session, slack_user_id)
         user_lookup_ms = int((time.monotonic() - t_lookup) * 1000)
-
-        rate_check_ms = 0
-        rate_count = None
-        if hr_user and hr_user.role and settings.RATE_LIMIT_PER_HOUR > 0:
-            t_rate = time.monotonic()
-            rate_count = count_recent_queries(session, slack_user_id)
-            rate_check_ms = int((time.monotonic() - t_rate) * 1000)
 
     if not hr_user:
         logger.warning("slack_user_not_registered", slack_user_id=slack_user_id)
@@ -336,22 +283,6 @@ def process_event(
         return
 
     rbac_ctx = RBACContext.for_user(hr_user)
-    employee_id = hr_user.employee_id
-    role = hr_user.role
-
-    # Rate limit check (count was already fetched above) — post a friendly
-    # message and bail if exceeded.
-    limit = settings.RATE_LIMIT_PER_HOUR
-    if limit > 0 and rate_count is not None and rate_count >= limit:
-        try:
-            client.chat_postMessage(
-                channel=channel,
-                thread_ts=thread_ts,
-                text=f"You've reached the limit of {limit} queries per hour. Please try again later.",
-            )
-        except Exception:
-            pass
-        return
 
     # Fetch bot's own user ID once so we can identify its messages in the thread.
     t_history = time.monotonic()
@@ -389,47 +320,16 @@ def process_event(
         logger.info(
             "process_event_timing",
             user_lookup_ms=user_lookup_ms,
-            rate_check_ms=rate_check_ms,
             history_fetch_ms=history_fetch_ms,
             agent_ms=result.agent_ms,
             slack_post_ms=slack_post_ms,
             total_agent_ms=result.total_ms,
         )
 
-        with _db_session() as session:
-            _write_audit(
-                session,
-                slack_user_id=slack_user_id,
-                employee_id=employee_id,
-                role=role,
-                question=text,
-                answer=result.answer,
-                tables_accessed=result.tables_accessed or None,
-                schema_rag_ms=result.schema_rag_ms,
-                agent_ms=result.agent_ms,
-                total_ms=result.total_ms,
-                prompt_tokens=result.prompt_tokens or None,
-                completion_tokens=result.completion_tokens or None,
-                total_tokens=result.total_tokens or None,
-                user_lookup_ms=user_lookup_ms,
-                rate_check_ms=rate_check_ms,
-                history_fetch_ms=history_fetch_ms,
-                slack_post_ms=slack_post_ms,
-            )
-
     except SlackApiError as exc:
         logger.error("slack_api_error_posting_reply", error=exc.response["error"])
-    except Exception as exc:
+    except Exception:
         logger.exception("slack_event_processing_failed", slack_user_id=slack_user_id)
-        with _db_session() as session:
-            _write_audit(
-                session,
-                slack_user_id=slack_user_id,
-                employee_id=employee_id,
-                role=role,
-                question=text,
-                error=str(exc),
-            )
         # Best-effort error reply — don't let this raise.
         try:
             client.chat_postMessage(

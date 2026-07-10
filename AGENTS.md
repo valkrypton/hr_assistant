@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 uv sync                     # creates .venv, installs pinned deps + dev tools from uv.lock
 uv run pre-commit install --install-hooks --hook-type pre-commit --hook-type pre-push
 cp .env.example .env        # set DATABASE_URL, AI_PROVIDER, and relevant keys
-uv run alembic upgrade head # create/update hr_admin_users, hr_assistant_users, hr_assistant_audit
+uv run alembic upgrade head # create/update hr_admin_users, hr_assistant_users
 ```
 
 Schema changes to `core/rbac/models.py` go through Alembic from here on
@@ -37,7 +37,7 @@ The project is split into two packages that must never have circular imports:
 core/   — AI agent logic, zero dependency on api/
 api/    — FastAPI HTTP layer, imports from core only
   routes/    — thin HTTP handlers: parse request → call a services/ function → map to a schemas/ response
-  services/  — business logic (RBAC resolution, DB queries, audit writes) — one module per route file
+  services/  — business logic (RBAC resolution, DB queries) — one module per route file
   schemas/   — Pydantic request/response models — one module per route file
   deps.py    — auth dependencies (require_admin, require_admin_unless_open) and DbDep,
                the typed DB-session dependency (one Session per request, injected via
@@ -56,7 +56,6 @@ api/    — FastAPI HTTP layer, imports from core only
 | `GET /health` | `api/routes/health.py` | Pings both DBs; returns 503 if either is unreachable |
 | `POST /webhook/slack` | `api/routes/slack.py` | Slack Events API handler |
 | `GET/POST /users` | `api/routes/users.py` | Register / list / deactivate HR agent users |
-| `GET /audit` | `api/routes/audit.py` | Query audit log |
 | `/admin` | `api/admin.py` | SQLAdmin panel |
 
 **LLM provider selection** (`core/config.py` → `core/providers/factory.py`):
@@ -68,7 +67,7 @@ Uses `langchain_community.agent_toolkits.create_sql_agent`. On each call to `que
 **Database:**
 Two separate PostgreSQL connections:
 - `DATABASE_URL` — read-only ERP database (queried by the SQL agent)
-- `APP_DATABASE_URL` — writable app database (users, audit logs); required, no fallback
+- `APP_DATABASE_URL` — writable app database (users); required, no fallback
 
 **RBAC** (`core/rbac/`):
 Four roles: `cto_ceo`, `hr_manager`, `dept_head`, `team_lead`. Each role scopes what the agent may reveal. Forbidden columns (salary, NIC, DOB, etc.) are injected into every prompt regardless of role. Scope is enforced at the DB layer by `core/rbac/sql_guard.py` and proven by `tests/test_scope_execution.py`. Future enforcement directions (Postgres RLS, typed tools) are in [docs/rbac-hardening-roadmap.md](docs/rbac-hardening-roadmap.md).

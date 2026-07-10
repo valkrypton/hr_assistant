@@ -4,8 +4,8 @@ End-to-end API tests covering the 20 canonical query types from SPEC.md.
 Strategy
 --------
 Tests hit the FastAPI app via TestClient with the SQL agent mocked out.
-Verifies the full request pipeline — routing, RBAC enforcement, audit
-logging, rate limiting — without a live database or LLM.
+Verifies the full request pipeline — routing and RBAC enforcement —
+without a live database or LLM.
 
 The APP_DATABASE_URL is overridden to a fresh SQLite file per test session
 so route handlers automatically use the test DB (they call app_engine() at
@@ -13,7 +13,6 @@ request time, which reads settings.APP_DATABASE_URL).
 """
 
 import base64
-from datetime import UTC
 from unittest.mock import patch
 
 import pytest
@@ -217,41 +216,6 @@ class TestQueryAuthenticated:
         assert r.status_code == 200
         assert r.json()["answer"] == MOCK_ANSWER
 
-    def test_audit_log_written_on_success(self, client, registered_user):
-        r = client.post(
-            "/query",
-            json={
-                "query": "Audit test query",
-                "slack_user_id": registered_user,
-            },
-        )
-        assert r.status_code == 200
-        logs = client.get(
-            f"/audit?slack_user_id={registered_user}&limit=5", headers=_ADMIN_HEADERS
-        ).json()
-        questions = [log["question"] for log in logs]
-        assert "Audit test query" in questions
-        entry = next(log for log in logs if log["question"] == "Audit test query")
-        assert entry["answer"] == MOCK_ANSWER
-        assert entry["total_tokens"] == 600
-
-    def test_audit_log_written_on_error(self, client, registered_user):
-        with patch("api.services.query_service.agent_query", side_effect=RuntimeError("DB down")):
-            r = client.post(
-                "/query",
-                json={
-                    "query": "Error test query",
-                    "slack_user_id": registered_user,
-                },
-            )
-        assert r.status_code == 500
-        logs = client.get(
-            f"/audit?slack_user_id={registered_user}&limit=10", headers=_ADMIN_HEADERS
-        ).json()
-        errors = [log for log in logs if log["question"] == "Error test query"]
-        assert len(errors) > 0
-        assert errors[0]["error"] is not None
-
 
 # ---------------------------------------------------------------------------
 # /query — identity forgery protection
@@ -339,61 +303,6 @@ class TestQueryIdentityForgery:
 
 
 # ---------------------------------------------------------------------------
-# Rate limiting
-# ---------------------------------------------------------------------------
-
-
-class TestRateLimit:
-    def test_rate_limit_enforced(self, client):
-        """Pre-fill audit log to hit limit, next query should get 429."""
-        from datetime import datetime
-
-        import sqlalchemy
-        from sqlalchemy.orm import Session
-
-        from core.config import settings
-        from core.rbac.models import AuditLog, HRUser
-
-        slack_id = "U_RATE_TEST"
-        engine = sqlalchemy.create_engine(settings.APP_DATABASE_URL)
-
-        with Session(engine) as session:
-            # Register user
-            session.add(HRUser(employee_id=888, role="hr_manager", slack_user_id=slack_id))
-            session.commit()
-
-        limit = 2
-        with Session(engine) as session:
-            for _ in range(limit):
-                session.add(
-                    AuditLog(
-                        slack_user_id=slack_id,
-                        question="prior",
-                        created_at=datetime.now(UTC),
-                    )
-                )
-            session.commit()
-
-        with (
-            patch("api.deps.settings.RATE_LIMIT_PER_HOUR", limit),
-            patch(
-                "api.services.query_service.check_rate_limit",
-                side_effect=__import__("fastapi").HTTPException(
-                    status_code=429, detail="Rate limit exceeded"
-                ),
-            ),
-        ):
-            r = client.post(
-                "/query",
-                json={
-                    "query": "One more",
-                    "slack_user_id": slack_id,
-                },
-            )
-        assert r.status_code == 429
-
-
-# ---------------------------------------------------------------------------
 # Admin authentication — unauthenticated requests must be rejected
 # ---------------------------------------------------------------------------
 
@@ -417,9 +326,6 @@ class TestAdminAuth:
 
     def test_delete_user_without_auth_returns_401(self, client):
         assert client.delete("/users/1").status_code == 401
-
-    def test_audit_without_auth_returns_401(self, client):
-        assert client.get("/audit").status_code == 401
 
     def test_wrong_password_returns_401(self, client):
         import base64
@@ -485,67 +391,3 @@ class TestUserAdmin:
     def test_deregister_nonexistent_user(self, client):
         r = client.delete("/users/99999", headers=_ADMIN_HEADERS)
         assert r.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# Audit log endpoint
-# ---------------------------------------------------------------------------
-
-
-class TestAuditLog:
-    def test_audit_returns_list(self, client):
-        r = client.get("/audit", headers=_ADMIN_HEADERS)
-        assert r.status_code == 200
-        assert isinstance(r.json(), list)
-
-    def test_audit_filter_by_user(self, client, registered_user):
-        client.post(
-            "/query",
-            json={
-                "query": "filter test",
-                "slack_user_id": registered_user,
-            },
-        )
-        r = client.get(f"/audit?slack_user_id={registered_user}", headers=_ADMIN_HEADERS)
-        assert r.status_code == 200
-        assert all(e["slack_user_id"] == registered_user for e in r.json())
-
-    def test_audit_limit(self, client, registered_user):
-        for i in range(4):
-            client.post(
-                "/query",
-                json={
-                    "query": f"limit test {i}",
-                    "slack_user_id": registered_user,
-                },
-            )
-        r = client.get("/audit?limit=2", headers=_ADMIN_HEADERS)
-        assert len(r.json()) <= 2
-
-    def test_audit_entry_has_latency_fields(self, client, registered_user):
-        client.post(
-            "/query",
-            json={
-                "query": "latency check",
-                "slack_user_id": registered_user,
-            },
-        )
-        logs = client.get(
-            f"/audit?slack_user_id={registered_user}&limit=5", headers=_ADMIN_HEADERS
-        ).json()
-        entry = next((log for log in logs if log["question"] == "latency check"), None)
-        assert entry is not None
-        assert entry["total_ms"] == 210
-        assert entry["prompt_tokens"] == 500
-
-    def test_negative_limit_clamped_not_rejected(self, client):
-        # A negative limit must not reach SQLAlchemy's .limit() unclamped.
-        r = client.get("/audit?limit=-5", headers=_ADMIN_HEADERS)
-        assert r.status_code == 200
-        assert isinstance(r.json(), list)
-
-    def test_limit_zero_returns_empty(self, client):
-        # limit=0 clamps to max(0, min(0, 1000)) == 0 → an empty list.
-        r = client.get("/audit?limit=0", headers=_ADMIN_HEADERS)
-        assert r.status_code == 200
-        assert r.json() == []

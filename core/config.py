@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # ERP database — read-only; used exclusively by the SQL agent.
     DATABASE_URL: str = ""
 
-    # App database — writable; stores hr_assistant_users, audit logs, etc.
+    # App database — writable; stores hr_assistant_users, hr_admin_users.
     # Required — no fallback to DATABASE_URL.
     APP_DATABASE_URL: str = ""
 
@@ -71,9 +71,6 @@ class Settings(BaseSettings):
     # Slack integration (Phase 3)
     SLACK_BOT_TOKEN: str = ""
     SLACK_SIGNING_SECRET: str = ""
-
-    # Rate limiting — max queries per user per hour. Set to 0 to disable.
-    RATE_LIMIT_PER_HOUR: int = 30
 
     # Vector index
     VECTOR_STORE_PATH: str = "./data/chroma"

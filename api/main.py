@@ -19,9 +19,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from api.admin import AuditLogAdmin, HRUserAdmin
+from api.admin import HRUserAdmin
 from api.deps import app_engine
-from api.routes import audit, health, query, slack, users
+from api.routes import health, query, slack, users
 from core.agent import get_agent
 from core.auth import verify_password
 from core.config import settings
@@ -140,7 +140,6 @@ admin = Admin(
     app, engine=app_engine(), authentication_backend=AdminAuth(secret_key=settings.SECRET_KEY)
 )
 admin.add_view(HRUserAdmin)
-admin.add_view(AuditLogAdmin)
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +149,6 @@ admin.add_view(AuditLogAdmin)
 app.include_router(health.router)
 app.include_router(query.router)
 app.include_router(users.router)
-app.include_router(audit.router)
 app.include_router(slack.router)
 
 

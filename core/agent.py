@@ -279,7 +279,7 @@ def _extract_tables(intermediate_steps) -> str:
     the real parse tree so subqueries and CTEs are captured correctly, and to
     exclude CTE alias names (e.g. the "x" in "WITH x AS (...)") which are not
     real tables. Falls back to a regex over FROM/JOIN on parse failure so
-    audit logging never breaks on unusual SQL.
+    table extraction never breaks on unusual SQL.
     """
     import sqlglot
     import sqlglot.expressions as exp

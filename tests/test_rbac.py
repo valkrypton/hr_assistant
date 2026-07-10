@@ -14,8 +14,6 @@ These tests cover:
 No database or LLM is involved — all pure unit tests.
 """
 
-from datetime import UTC
-
 import pytest
 
 from core.rbac.context import FORBIDDEN_COLUMNS, RBACContext
@@ -991,53 +989,3 @@ class TestExtractTables:
         from core.agent import _extract_tables
 
         assert _extract_tables([]) == ""
-
-
-# ---------------------------------------------------------------------------
-# core.rate_limit.count_recent_queries — shared rate-limit counting
-# ---------------------------------------------------------------------------
-
-
-class TestCountRecentQueries:
-    @staticmethod
-    def make_engine():
-        import sqlalchemy
-
-        from core.rbac.models import Base
-
-        engine = sqlalchemy.create_engine(
-            "sqlite:///:memory:",
-            poolclass=sqlalchemy.pool.StaticPool,
-            connect_args={"check_same_thread": False},
-        )
-        Base.metadata.create_all(engine)
-        return engine
-
-    def test_counts_only_matching_user_within_last_hour(self):
-        from datetime import datetime, timedelta
-
-        from sqlalchemy.orm import Session
-
-        from core.rate_limit import count_recent_queries
-        from core.rbac.models import AuditLog
-
-        engine = self.make_engine()
-        now = datetime.now(UTC)
-        with Session(engine) as session:
-            for _ in range(3):
-                session.add(AuditLog(slack_user_id="U1", question="q", created_at=now))
-            session.add(AuditLog(slack_user_id="U2", question="q", created_at=now))
-            # Outside the 1-hour window — must not be counted.
-            session.add(
-                AuditLog(
-                    slack_user_id="U1",
-                    question="q",
-                    created_at=now - timedelta(hours=2),
-                )
-            )
-            session.commit()
-
-        with Session(engine) as session:
-            assert count_recent_queries(session, "U1") == 3
-            assert count_recent_queries(session, "U2") == 1
-            assert count_recent_queries(session, "U_UNKNOWN") == 0

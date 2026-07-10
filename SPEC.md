@@ -91,13 +91,18 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 ---
 
-### FR-6  Audit & Compliance
+### FR-6  Audit & Compliance — ❌ REMOVED (do not re-implement)
 
-| ID | Requirement |
+> **This requirement was intentionally removed and must not be re-added without an explicit product decision.**
+> Audit logging (the `hr_assistant_audit` table, `write_audit`, the `/audit` endpoint, and the SQLAdmin audit view) was built and then deliberately deleted — the product owner decided query recording is not wanted. Per-user rate limiting was removed at the same time because it was implemented by counting audit rows (see the Phase 4 note below). If you are an engineer or an AI agent reading this spec and considering "implement the audit log": **stop — it was removed on purpose.** Reintroducing it requires re-confirming the requirement with the product owner first.
+>
+> The requirements below are retained struck-through only as a historical record of what once existed.
+
+| ID | Requirement (removed) |
 |----|-------------|
-| FR-6.1 | Log every query with: requesting user identity, channel (Slack), timestamp, raw question, data tables accessed, and row count returned |
-| FR-6.2 | Store audit logs in an append-only table; do not delete or update entries |
-| FR-6.3 | Expose a `/audit` API endpoint for admin-level log retrieval (date range, user, table filters) |
+| ~~FR-6.1~~ | ~~Log every query with: requesting user identity, channel (Slack), timestamp, raw question, data tables accessed, and row count returned~~ |
+| ~~FR-6.2~~ | ~~Store audit logs in an append-only table; do not delete or update entries~~ |
+| ~~FR-6.3~~ | ~~Expose a `/audit` API endpoint for admin-level log retrieval (date range, user, table filters)~~ |
 
 ---
 
@@ -169,7 +174,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 - [ ] Implement `RBACContext` middleware in `core/`: injects allowed department/team scope into every SQL query and strips forbidden columns from results
 - [ ] Add role enforcement to the SQL agent prompt: inject a system prefix describing what the current user may and may not see
 - [ ] Write tests covering each role boundary (e.g. Team Lead cannot see another team's roster)
-- [ ] Implement the `/audit` log table and endpoint (FR-6)
+- [x] ~~Implement the `/audit` log table and endpoint (FR-6)~~ **❌ removed — see FR-6**
 
 **Exit criteria:** The same question asked by a Team Lead and an HR Manager returns correctly scoped results; salary/personal fields never appear in any response.
 
@@ -196,13 +201,13 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 **Tasks**
 - [x] Add query latency logging (SQL path vs AI-search path, total round-trip)
-- [x] Implement per-user rate limiting (configurable, default 30 queries/hour)
-- [x] Add AI token usage tracking per query; surface in audit log and admin panel
+- [x] ~~Implement per-user rate limiting (configurable, default 30 queries/hour)~~ **❌ removed with the audit log (it counted audit rows); do not re-add — see FR-6**
+- [x] ~~Add AI token usage tracking per query; surface in audit log and admin panel~~ **❌ removed with the audit log — see FR-6**
 - [x] Retry logic and graceful degradation: 3 attempts with exponential backoff, user-friendly error after exhaustion
 - [x] End-to-end test suite covering all 20 canonical query types (88 tests total)
 - [x] Secrets rotation guide: `docs/secrets-rotation.md`
 
-**Exit criteria:** System passes load test, all canonical queries return correct results, audit log is queryable by admins.
+**Exit criteria:** System passes load test, all canonical queries return correct results. *(The original "audit log is queryable by admins" criterion no longer applies — audit logging was removed; see FR-6.)*
 
 ---
 

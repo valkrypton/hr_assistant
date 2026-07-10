@@ -17,7 +17,6 @@ Natural-language workforce assistant that answers HR queries in plain English, b
 core/   — AI agent logic (zero dependency on api/)
   agent.py                — LangChain SQL agent; injects full schema.md on every query
   config.py               — Settings (pydantic-settings), loaded from .env
-  rate_limit.py           — Shared rate-limit counting, used by both api/ and adapters/
   rbac/models.py          — SQLAlchemy models (source of truth for the DB schema)
   providers/factory.py    — LLM factory (Ollama / OpenAI / Anthropic / xAI / QWEN)
   vector_index.py         — Chroma index over team/project descriptions (FR-4 semantic search)
@@ -27,8 +26,8 @@ core/   — AI agent logic (zero dependency on api/)
 api/    — FastAPI HTTP layer (imports from core only)
   main.py                 — App setup, middleware, admin panel, router registration
   deps.py                 — Auth dependencies + DbDep (typed DB-session dependency)
-  routes/                 — thin HTTP handlers — query, health, audit, users, slack
-  services/               — business logic per route (query_service, user_service, audit_service)
+  routes/                 — thin HTTP handlers — query, health, users, slack
+  services/               — business logic per route (query_service, user_service)
   schemas/                — Pydantic request/response models per route
   admin.py                — SQLAdmin views
 
@@ -60,16 +59,15 @@ Edit `.env`:
 | Variable | Description |
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string (ERP, read-only) |
-| `APP_DATABASE_URL` | PostgreSQL connection string (app DB — users, audit logs) |
+| `APP_DATABASE_URL` | PostgreSQL connection string (app DB — users) |
 | `AI_PROVIDER` | `ollama` (default) \| `openai` \| `anthropic` \| `xai` \| `qwen` \| `librechat` |
 | `INCLUDED_TABLES` | Comma-separated whitelist of tables the agent may query |
 | `SLACK_BOT_TOKEN` | Slack bot OAuth token (`xoxb-…`) |
 | `SLACK_SIGNING_SECRET` | Slack signing secret for request verification |
-| `RATE_LIMIT_PER_HOUR` | Max queries per user per hour (default: 30; set 0 to disable) |
 | `VECTOR_STORE_PATH` | Where to persist Chroma DB for ERP semantic search (default: `./data/chroma`) |
 | `VECTOR_EMBEDDING_MODEL` | Ollama embedding model for ERP search (default: `nomic-embed-text`) |
 
-Create the app-DB tables (`hr_admin_users`, `hr_assistant_users`, `hr_assistant_audit`):
+Create the app-DB tables (`hr_admin_users`, `hr_assistant_users`):
 
 ```bash
 uv run alembic upgrade head
