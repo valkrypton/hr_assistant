@@ -56,7 +56,7 @@ api/    — FastAPI HTTP layer, imports from core only
   routes/    — thin HTTP handlers: parse request → call a services/ function → map to a schemas/ response
   services/  — business logic (RBAC resolution, DB queries) — one module per route file
   schemas/   — Pydantic request/response models — one module per route file
-  deps.py    — auth dependency (require_admin) and DbDep,
+  deps.py    — auth dependencies (require_admin, require_admin_unless_open) and DbDep,
                the typed DB-session dependency (one Session per request, injected via
                Depends). Routes with a slow call in the middle (e.g. /query's LLM agent
                call, which can take ~15s) use db_session() directly in short scopes
@@ -69,7 +69,7 @@ api/    — FastAPI HTTP layer, imports from core only
 **Key routes:**
 | Route | File | Purpose | Auth |
 |---|---|---|---|
-| `POST /query` | `api/routes/query.py` | Natural-language HR query; optional RBAC via `slack_user_id` | Basic Auth (`require_admin`) |
+| `POST /query` | `api/routes/query.py` | Natural-language HR query; optional RBAC via `slack_user_id` | Basic Auth unless `ALLOW_UNAUTHENTICATED_QUERY` (dev only) |
 | `GET /health` | `api/routes/health.py` | Pings both DBs; returns 503 if either is unreachable | Public |
 | `POST /webhook/slack` | `api/routes/slack.py` | Slack Events API handler | Slack signature verification |
 | `GET/POST /users` | `api/routes/users.py` | Register / list HR agent users | Basic Auth (`require_admin`) |

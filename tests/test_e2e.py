@@ -68,8 +68,10 @@ def client(test_db_url, mock_query):
 
     orig_app = settings.APP_DATABASE_URL
     orig_erp = settings.DATABASE_URL
+    orig_allow_unauth = settings.ALLOW_UNAUTHENTICATED_QUERY
     settings.APP_DATABASE_URL = test_db_url
     settings.DATABASE_URL = test_db_url
+    settings.ALLOW_UNAUTHENTICATED_QUERY = True
     app_engine.cache_clear()
     erp_engine.cache_clear()
 
@@ -100,6 +102,7 @@ def client(test_db_url, mock_query):
     finally:
         settings.APP_DATABASE_URL = orig_app
         settings.DATABASE_URL = orig_erp
+        settings.ALLOW_UNAUTHENTICATED_QUERY = orig_allow_unauth
         app_engine.cache_clear()
         erp_engine.cache_clear()
 
@@ -140,19 +143,17 @@ class TestHealth:
 
 
 # ---------------------------------------------------------------------------
-# /query — canonical queries (admin-authenticated)
+# /query — unauthenticated
 # ---------------------------------------------------------------------------
 
 
-class TestCanonicalQueries:
+class TestQueryUnauthenticated:
     def test_empty_query_rejected(self, client):
-        r = client.post("/query", json={"query": "   "}, auth=_ADMIN_CREDS)
+        r = client.post("/query", json={"query": "   "})
         assert r.status_code == 400
 
     def test_valid_query_returns_answer(self, client):
-        r = client.post(
-            "/query", json={"query": "How many employees do we have?"}, auth=_ADMIN_CREDS
-        )
+        r = client.post("/query", json={"query": "How many employees do we have?"})
         assert r.status_code == 200
         assert r.json()["answer"] == MOCK_ANSWER
 
@@ -182,18 +183,18 @@ class TestCanonicalQueries:
         ],
     )
     def test_canonical_query(self, client, query_text):
-        """The canonical queries from SPEC.md must return 200 with an answer."""
-        r = client.post("/query", json={"query": query_text}, auth=_ADMIN_CREDS)
+        """All 20 canonical queries from SPEC.md must return 200 with an answer."""
+        r = client.post("/query", json={"query": query_text})
         assert r.status_code == 200
         assert len(r.json()["answer"]) > 0
 
 
 # ---------------------------------------------------------------------------
-# /query — RBAC scope via slack_user_id (admin-authenticated)
+# /query — authenticated with RBAC
 # ---------------------------------------------------------------------------
 
 
-class TestQueryRBACScope:
+class TestQueryAuthenticated:
     def test_unregistered_user_forbidden(self, client):
         r = client.post(
             "/query",
@@ -201,7 +202,6 @@ class TestQueryRBACScope:
                 "query": "How many employees?",
                 "slack_user_id": "U_NOT_REGISTERED",
             },
-            auth=_ADMIN_CREDS,
         )
         assert r.status_code == 403
 
@@ -212,7 +212,6 @@ class TestQueryRBACScope:
                 "query": "How many employees?",
                 "slack_user_id": registered_user,
             },
-            auth=_ADMIN_CREDS,
         )
         assert r.status_code == 200
         assert r.json()["answer"] == MOCK_ANSWER
@@ -226,12 +225,20 @@ class TestQueryRBACScope:
 class TestQueryIdentityForgery:
     """
     slack_user_id in the request body is NOT proof of identity — Slack IDs
-    are public within a workspace. /query always demands admin credentials;
-    otherwise anyone who knows a privileged user's Slack ID could query with
-    that user's role.
+    are public within a workspace. Without ALLOW_UNAUTHENTICATED_QUERY,
+    /query must demand admin credentials; otherwise anyone who knows a
+    privileged user's Slack ID could query with that user's role.
     """
 
-    def test_forged_slack_id_without_auth_rejected(self, client, registered_user):
+    @pytest.fixture()
+    def prod_mode(self):
+        """Disable the dev-mode open-access flag for the duration of a test."""
+        from core.config import settings
+
+        with patch.object(settings, "ALLOW_UNAUTHENTICATED_QUERY", False):
+            yield
+
+    def test_forged_slack_id_without_auth_rejected(self, client, registered_user, prod_mode):
         # The attack from the review: caller supplies a real user's Slack ID.
         r = client.post(
             "/query",
@@ -242,11 +249,11 @@ class TestQueryIdentityForgery:
         )
         assert r.status_code == 401
 
-    def test_no_slack_id_without_auth_rejected(self, client):
+    def test_no_slack_id_without_auth_rejected(self, client, prod_mode):
         r = client.post("/query", json={"query": "How many employees?"})
         assert r.status_code == 401
 
-    def test_wrong_admin_password_rejected(self, client, registered_user):
+    def test_wrong_admin_password_rejected(self, client, registered_user, prod_mode):
         bad = {"Authorization": "Basic " + base64.b64encode(b"test-admin:wrong").decode()}
         r = client.post(
             "/query",
@@ -258,7 +265,7 @@ class TestQueryIdentityForgery:
         )
         assert r.status_code == 401
 
-    def test_admin_vouched_query_allowed(self, client, registered_user):
+    def test_admin_vouched_query_allowed(self, client, registered_user, prod_mode):
         r = client.post(
             "/query",
             json={
@@ -270,7 +277,7 @@ class TestQueryIdentityForgery:
         assert r.status_code == 200
         assert r.json()["answer"] == MOCK_ANSWER
 
-    def test_admin_no_slack_id_allowed(self, client):
+    def test_admin_no_slack_id_allowed(self, client, prod_mode):
         # Authenticated admin may run without a slack_user_id — no RBAC scope
         # is applied, but the admin credentials are proof enough of identity.
         r = client.post(
@@ -282,6 +289,17 @@ class TestQueryIdentityForgery:
         )
         assert r.status_code == 200
         assert r.json()["answer"] == MOCK_ANSWER
+
+    def test_dev_mode_still_open(self, client, registered_user):
+        # With ALLOW_UNAUTHENTICATED_QUERY=true (module default here), no auth needed.
+        r = client.post(
+            "/query",
+            json={
+                "query": "How many employees?",
+                "slack_user_id": registered_user,
+            },
+        )
+        assert r.status_code == 200
 
 
 # ---------------------------------------------------------------------------

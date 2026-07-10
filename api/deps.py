@@ -54,6 +54,21 @@ def require_admin(credentials: HTTPBasicCredentials | None = Security(_basic_aut
     return admin
 
 
+def require_admin_unless_open(
+    credentials: HTTPBasicCredentials | None = Security(_basic_auth),
+) -> AdminUser | None:
+    """
+    /query guard. slack_user_id in the request body selects an RBAC scope but
+    is NOT proof of identity (Slack IDs are public within a workspace), so the
+    request must be vouched for by admin credentials — unless
+    ALLOW_UNAUTHENTICATED_QUERY explicitly opts into open access (local dev).
+    Production RBAC traffic goes through the signature-verified Slack webhook.
+    """
+    if settings.ALLOW_UNAUTHENTICATED_QUERY:
+        return None
+    return require_admin(credentials)
+
+
 @lru_cache(maxsize=1)
 def app_engine():
     """Writable engine for our own tables (hr_assistant_users, hr_admin_users)."""

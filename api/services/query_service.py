@@ -1,7 +1,7 @@
 """
 Business logic for POST /query — RBAC resolution and agent invocation.
-Auth (require_admin) stays in api/routes/query.py since it's a FastAPI
-dependency, not domain logic.
+Auth (require_admin_unless_open) stays in api/routes/query.py since it's a
+FastAPI dependency, not domain logic.
 """
 
 from fastapi import HTTPException

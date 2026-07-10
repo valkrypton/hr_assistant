@@ -3,10 +3,11 @@ Regression tests for the production config guards in core.config.
 
 Settings._apply_fallbacks_and_guards raises RuntimeError at construction
 time when DEBUG=false and any of SECRET_KEY / APP_DATABASE_URL /
-CORS_ALLOW_ORIGINS are misconfigured for production. These tests build
-fresh Settings instances (never mutating the global `settings` singleton)
-to verify each guard fires, that dev (DEBUG=true) stays zero-config, and
-that APP_DATABASE_URL no longer falls back to DATABASE_URL.
+CORS_ALLOW_ORIGINS / ALLOW_UNAUTHENTICATED_QUERY are misconfigured for
+production. These tests build fresh Settings instances (never mutating the
+global `settings` singleton) to verify each guard fires, that dev (DEBUG=true)
+stays zero-config, and that APP_DATABASE_URL no longer falls back to
+DATABASE_URL.
 """
 
 import pytest
@@ -15,6 +16,7 @@ from core.config import Settings
 
 _GUARDED_ENV_VARS = (
     "DEBUG",
+    "ALLOW_UNAUTHENTICATED_QUERY",
     "SECRET_KEY",
     "APP_DATABASE_URL",
     "DATABASE_URL",
@@ -31,6 +33,17 @@ def _clear_guarded_env(monkeypatch):
 
 
 class TestProdGuards:
+    def test_allow_unauthenticated_query_raises_in_prod(self, monkeypatch):
+        _clear_guarded_env(monkeypatch)
+        monkeypatch.setenv("DEBUG", "false")
+        monkeypatch.setenv("ALLOW_UNAUTHENTICATED_QUERY", "true")
+        monkeypatch.setenv("SECRET_KEY", "a-strong-non-placeholder-secret")
+        monkeypatch.setenv("APP_DATABASE_URL", "postgres://app")
+        monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://example.com")
+
+        with pytest.raises(RuntimeError, match="ALLOW_UNAUTHENTICATED_QUERY"):
+            Settings(_env_file=None)
+
     def test_missing_app_database_url_raises_in_prod(self, monkeypatch):
         _clear_guarded_env(monkeypatch)
         monkeypatch.setenv("DEBUG", "false")
