@@ -69,13 +69,17 @@ _BLOCKED_FUNCTIONS = frozenset(
         "pg_ls_logicalmapdir",
         "pg_ls_replslotdir",
         "pg_stat_file",
+        "pg_file_write",
         "lo_import",
         "lo_export",
         "lo_get",
+        "lo_put",
         # denial of service
         "pg_sleep",
         "pg_sleep_for",
         "pg_sleep_until",
+        "pg_terminate_backend",
+        "pg_cancel_backend",
     }
 )
 

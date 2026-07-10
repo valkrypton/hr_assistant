@@ -33,6 +33,10 @@ NEWLY_BLOCKED_FUNCTION_CALLS = [
     "SELECT pg_ls_tmpdir('base/pgsql_tmp')",
     "SELECT dblink_get_result('c')",
     "SELECT dblink_connect('x','y')",
+    "SELECT pg_file_write('/tmp/x', 'data', false)",
+    "SELECT lo_put(16385, 0, 'data')",
+    "SELECT pg_terminate_backend(123)",
+    "SELECT pg_cancel_backend(123)",
 ]
 
 
