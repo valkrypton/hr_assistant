@@ -4,7 +4,7 @@ import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from adapters.slack import process_event, verify_signature
+from adapters.slack import already_processed, process_event, verify_signature
 from core.config import settings
 
 router = APIRouter()
@@ -53,6 +53,12 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
 
     # Step 4: Dispatch event.
     if payload.get("type") == "event_callback":
+        # Drop Slack retries / replays of an event we've already handled, so we
+        # don't re-run the agent and double-post. Ack 200 either way.
+        if already_processed(payload.get("event_id")):
+            logger.info("slack_duplicate_event_ignored", event_id=payload.get("event_id"))
+            return JSONResponse({"ok": True})
+
         event = payload.get("event", {})
         etype = event.get("type")
 
