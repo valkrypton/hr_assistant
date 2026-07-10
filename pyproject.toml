@@ -23,10 +23,6 @@ dependencies = [
     # Schema migrations
     "alembic>=1.13",
 
-    # Vector index (semantic search)
-    "chromadb>=0.5",
-    "langchain-chroma>=0.1",
-
     # API layer
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -91,7 +87,6 @@ ignore = [
 "core/rbac/context.py" = ["E501"]
 "adapters/slack.py" = ["E501"]
 # Ad-hoc scripts / seed data / SQL fixtures — long lines are data, not logic.
-"scripts/query_erp.py" = ["E501"]
 "scripts/seed_erp.py" = ["E501"]
 "tests/test_scope_execution.py" = ["E501"]
 

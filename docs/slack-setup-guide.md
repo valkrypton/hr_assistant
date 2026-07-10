@@ -129,8 +129,11 @@ Every person who will use HR Assistant must be registered with a role. This cont
    - **Team ID** — required for Team Lead role
 
 **Option B — API**
+
+The `/users` API requires admin HTTP Basic Auth. If you don't have an admin account yet, create one on the server first: `uv run python scripts/create_admin.py <username>`.
+
 ```bash
-curl -X POST https://your-server/users \
+curl -u <admin>:<password> -X POST https://your-server/users \
   -H "Content-Type: application/json" \
   -d '{
     "employee_id": 42,
@@ -165,5 +168,5 @@ curl -X POST https://your-server/users \
 ## Ongoing Administration
 
 **Adding a new user:** Follow Step 8 above
-**Removing a user:** Go to the admin panel → HR Users → find the user → set **Is Active** to off
-**Checking server health:** Visit **http://your-server/health** — should return `{"status": "ok"}`
+**Removing a user:** Go to the admin panel → HR Users → find the user → set **Is Active** to off — or use the API: `curl -u <admin>:<password> -X DELETE https://your-server/users/<id>` (soft-deactivates the user; returns 204)
+**Checking server health:** Visit **http://your-server/health** — should return `{"status": "ok", "erp_database": "connected", "app_database": "connected"}`

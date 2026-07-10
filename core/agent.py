@@ -339,7 +339,8 @@ def query(
     t_total_start = time.monotonic()
 
     # Step 1: Load full schema — small enough (~3k tokens) to inject entirely.
-    # No chunking/RAG needed; avoids lossy retrieval and Chroma dependency.
+    # No chunking/RAG needed; the full schema is injected directly, avoiding
+    # lossy retrieval.
     t_rag_start = time.monotonic()
     _schema_path = Path(__file__).parent / "context" / "schema.md"
     schema_block = _schema_path.read_text() if _schema_path.exists() else ""

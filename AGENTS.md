@@ -19,6 +19,13 @@ convention (`scripts/check_migration_naming.sh`, enforced by pre-commit).
 
 Add/remove/upgrade a dependency: `uv add <pkg>` / `uv remove <pkg>` / `uv lock --upgrade-package <pkg>`.
 
+Before using `/users`, `/query`, or the `/admin` panel, create an admin user
+(HTTP Basic Auth + `/admin` session login are both backed by `hr_admin_users`):
+
+```bash
+uv run python scripts/create_admin.py <username>   # also: --list, --deactivate <username>
+```
+
 ## Running
 
 ```bash
@@ -28,6 +35,16 @@ open index.html             # file:// — no server needed
 
 The API is at `http://localhost:8000`. Interactive docs at `/docs`.
 `GET /health` verifies both DB connections — check it first if the agent isn't responding.
+
+## Testing
+
+```bash
+uv run pytest              # full suite; coverage + HTML/JUnit reports land in reports/
+uv run pytest --no-cov -q  # quick run
+```
+
+The pre-push git hook runs the full suite automatically (`.pre-commit-config.yaml`),
+so a failing test blocks `git push`.
 
 ## Architecture
 
@@ -50,13 +67,14 @@ api/    — FastAPI HTTP layer, imports from core only
 `index.html` → `POST /query` (`api/routes/query.py` → `api/services/query_service.py`) → `core.agent.query()` → LangChain SQL agent → PostgreSQL
 
 **Key routes:**
-| Route | File | Purpose |
-|---|---|---|
-| `POST /query` | `api/routes/query.py` | Natural-language HR query; optional RBAC via `slack_user_id` |
-| `GET /health` | `api/routes/health.py` | Pings both DBs; returns 503 if either is unreachable |
-| `POST /webhook/slack` | `api/routes/slack.py` | Slack Events API handler |
-| `GET/POST /users` | `api/routes/users.py` | Register / list / deactivate HR agent users |
-| `/admin` | `api/admin.py` | SQLAdmin panel |
+| Route | File | Purpose | Auth |
+|---|---|---|---|
+| `POST /query` | `api/routes/query.py` | Natural-language HR query; optional RBAC via `slack_user_id` | Basic Auth unless `ALLOW_UNAUTHENTICATED_QUERY` (dev only) |
+| `GET /health` | `api/routes/health.py` | Pings both DBs; returns 503 if either is unreachable | Public |
+| `POST /webhook/slack` | `api/routes/slack.py` | Slack Events API handler | Slack signature verification |
+| `GET/POST /users` | `api/routes/users.py` | Register / list HR agent users | Basic Auth (`require_admin`) |
+| `DELETE /users/{user_id}` | `api/routes/users.py` | Deactivate a user (soft delete, `is_active=false`) | Basic Auth (`require_admin`) |
+| `/admin` | `api/admin.py` | SQLAdmin panel | Session-cookie login |
 
 **LLM provider selection** (`core/config.py` → `core/providers/factory.py`):
 `AI_PROVIDER` env var selects the backend. Ollama is the default. OpenAI-compatible providers (xAI/Grok, QWEN, LibreChat) reuse `langchain-openai` with a custom `base_url` — no extra packages needed.

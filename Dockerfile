@@ -2,7 +2,9 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-# Build deps for chromadb compiled extensions
+# Build toolchain for any deps that compile from source.
+# (Originally added for chromadb, since removed — kept until a docker build
+# verifies no remaining dep needs it; see docs/deployment.md.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
