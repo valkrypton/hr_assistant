@@ -31,12 +31,14 @@ if TYPE_CHECKING:
 
 
 # Columns that must never appear in any agent response, regardless of role.
+# Entries include the literal column names used by the live ERP `person` table.
 FORBIDDEN_COLUMNS: frozenset[str] = frozenset(
     {
         "salary",
         "basic_salary",
         "gross_salary",
         "net_salary",
+        "previous_salary",
         "compensation",
         "nic",
         "cnic",
@@ -44,7 +46,11 @@ FORBIDDEN_COLUMNS: frozenset[str] = frozenset(
         "bank_details",
         "home_address",
         "personal_address",
+        "current_address",
+        "permanent_address",
         "personal_phone",
+        "cellphone_number",
+        "public_cellphone_number",
         "personal_email",
         "date_of_birth",
         "dob",
