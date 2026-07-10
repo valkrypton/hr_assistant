@@ -265,6 +265,20 @@
     input.focus();
   }
 
+  // Admin Basic Auth credentials for /query. Kept in memory ONLY — never
+  // written to localStorage/sessionStorage — so they vanish on reload.
+  let creds = null;
+
+  function postQuery(base, q) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (creds) headers['Authorization'] = 'Basic ' + btoa(creds.user + ':' + creds.pass);
+    return fetch(base + '/query', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ query: q }),
+    });
+  }
+
   function addBubble(text, cls, meta) {
     const wrap = document.createElement('div');
     const b = document.createElement('div');
@@ -298,11 +312,26 @@
     const t0 = Date.now();
 
     try {
-      const res = await fetch(base + '/query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q }),
-      });
+      let res = await postQuery(base, q);
+
+      if (res.status === 401) {
+        // /query always requires admin Basic Auth — ask once and retry.
+        const user = prompt('Admin username:');
+        const pass = user !== null ? prompt('Admin password:') : null;
+        if (user === null || pass === null) {
+          thinking.remove();
+          addBubble('Admin credentials are required to query.', 'error');
+          return;
+        }
+        creds = { user, pass };
+        res = await postQuery(base, q);
+        if (res.status === 401) {
+          creds = null;
+          thinking.remove();
+          addBubble('Invalid admin credentials', 'error');
+          return;
+        }
+      }
 
       const data = await res.json();
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1) + 's';

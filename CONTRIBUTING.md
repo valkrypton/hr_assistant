@@ -50,6 +50,7 @@ The **pre-push git hook runs the full test suite** automatically, so a failing t
 
 ## Pull requests
 
+- CI (GitHub Actions, `.github/workflows/ci.yml`) runs ruff + the full test suite on every PR; both must be green.
 - Keep PRs focused — one logical change per PR.
 - All pre-commit hooks (ruff, migration naming) and the full test suite must pass.
 - Explain *why* in the description, not just what; link the relevant SPEC.md requirement when applicable.
