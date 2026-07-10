@@ -35,6 +35,54 @@ _BLOCKED_NODE_TYPES = (
     exp.TruncateTable,
 )
 
+# PostgreSQL functions that execute a SQL string with the caller's privileges
+# (bypassing scope + forbidden-column checks, since the inner SQL is an opaque
+# string literal the parser never inspects), read the filesystem/network, or
+# enable denial of service. sqlglot parses all of these as exp.Anonymous, so a
+# name denylist over Anonymous nodes catches them without touching legitimate
+# typed functions (COUNT, AVG, DATE_TRUNC, ...). This is DEFENSE IN DEPTH and is
+# necessarily incomplete — Postgres/extensions keep adding functions. The
+# PRIMARY control must be a least-privilege read-only ERP DB role with EXECUTE
+# revoked on these; the denylist is a backstop, not the boundary.
+_BLOCKED_FUNCTIONS = frozenset(
+    {
+        # execute a SQL string with caller privileges
+        "query_to_xml",
+        "query_to_xmlschema",
+        "query_to_xml_and_xmlschema",
+        "dblink",
+        "dblink_exec",
+        "dblink_open",
+        "dblink_fetch",
+        "dblink_connect",
+        "dblink_send_query",
+        "dblink_get_result",
+        # filesystem / large-object access
+        "pg_read_file",
+        "pg_read_binary_file",
+        "pg_ls_dir",
+        "pg_ls_logdir",
+        "pg_ls_waldir",
+        "pg_ls_tmpdir",
+        "pg_ls_archive_statusdir",
+        "pg_ls_logicalsnapdir",
+        "pg_ls_logicalmapdir",
+        "pg_ls_replslotdir",
+        "pg_stat_file",
+        "pg_file_write",
+        "lo_import",
+        "lo_export",
+        "lo_get",
+        "lo_put",
+        # denial of service
+        "pg_sleep",
+        "pg_sleep_for",
+        "pg_sleep_until",
+        "pg_terminate_backend",
+        "pg_cancel_backend",
+    }
+)
+
 # Tables that carry employee data via a direct person_id FK.  When one of
 # these appears in a SELECT without a person join, the scope predicate is
 # injected on the table itself — otherwise restricted roles could read
@@ -120,6 +168,18 @@ def rewrite_sql(sql: str, rbac_ctx: RBACContext | None) -> str:
         # we must also walk the tree and reject any DML/DDL node found anywhere.
         for bad in stmt.find_all(*_BLOCKED_NODE_TYPES):
             raise ValueError(f"Non-SELECT statement blocked by scope guard: {type(bad).__name__}")
+        # SELECT ... INTO writes a new table. sqlglot parses it as a Select
+        # carrying an exp.Into child, so it slips past the isinstance gate above
+        # and the DML/DDL walk. Reject it explicitly.
+        if stmt.find(exp.Into) is not None:
+            raise ValueError("SELECT ... INTO blocked by scope guard: it writes a table.")
+        # SQL-executing / filesystem / DoS functions (see _BLOCKED_FUNCTIONS).
+        # Blocked for ALL roles — their string arguments bypass every other
+        # check in this guard.
+        for func in stmt.find_all(exp.Anonymous):
+            fname = (func.name or "").lower()
+            if fname in _BLOCKED_FUNCTIONS:
+                raise ValueError(f"Function blocked by scope guard: {func.name}")
         # All table names/aliases in the statement — used to detect whole-row
         # references below.
         table_names = set()
