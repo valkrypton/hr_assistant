@@ -72,10 +72,6 @@ class Settings(BaseSettings):
     SLACK_BOT_TOKEN: str = ""
     SLACK_SIGNING_SECRET: str = ""
 
-    # Vector index
-    VECTOR_STORE_PATH: str = "./data/chroma"
-    VECTOR_EMBEDDING_MODEL: str = "nomic-embed-text"
-
     # Secret key for signing admin session cookies (SQLAdmin panel).
     # Set SECRET_KEY in the environment for production; openssl rand -hex 32
     # When unset, a random key is generated — sessions won't survive restarts

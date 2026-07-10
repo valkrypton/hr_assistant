@@ -19,7 +19,7 @@ There are two ways to talk to HR Assistant:
 Mention `@HR Assistant` in any channel, or send it a direct message. It replies in the same thread within seconds.
 
 **2. Web browser**
-Open the HR Assistant web page and type your question directly. No login required for internal use.
+Open the HR Assistant web page and type your question directly. API queries require admin credentials unless the server runs in a development "open" mode; Slack users are identified automatically by their Slack account.
 
 ---
 
@@ -67,7 +67,7 @@ Not everyone gets the same view. HR Assistant automatically shows each person on
 
 This happens automatically. A Team Lead asking "show me the full roster" will only see their own team — they will never see data from other teams, and the system will not tell them that data was hidden.
 
-Certain information is **never shown to anyone**, regardless of role: salary figures, bank details, personal phone numbers, home addresses, and medical records.
+Certain information is **never shown to anyone**, regardless of role: salary and compensation figures, bank details, national ID numbers (NIC/CNIC), passport numbers, personal phone numbers, personal email addresses, home addresses, dates of birth, and medical records.
 
 ---
 
@@ -96,6 +96,7 @@ HR Assistant works with several AI providers. The model can be swapped at any ti
 - xAI (Grok)
 - Alibaba (Qwen)
 - Ollama (local, self-hosted)
+- Self-hosted gateway (LibreChat / LiteLLM)
 
 ---
 

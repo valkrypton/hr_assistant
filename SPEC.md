@@ -1,7 +1,8 @@
 # HR Intelligence Agent — Specification
 
 Natural-language workforce assistant accessible via Slack,
-backed by a hybrid SQL + AI-search engine against the company ERP.
+backed by a SQL agent against the company ERP.
+(The originally planned hybrid AI-search path was removed — see FR-4.)
 
 ---
 
@@ -12,10 +13,10 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 | ID | Requirement |
 |----|-------------|
 | FR-1.1 | Accept free-text questions in English via Slack (DM or `@hr-agent` mention in any channel) |
-| FR-1.2 | Return answers within 5 seconds for SQL-path queries, 15 seconds for hybrid queries |
-| FR-1.3 | Format responses as rich Slack Block Kit cards with action buttons |
+| FR-1.2 | Return answers within 15 seconds ~~(5 seconds for SQL-path queries, 15 for hybrid)~~ *(hybrid path removed — see FR-4; observed SQL-agent latency is ~15 s)* |
+| FR-1.3 | Format responses as rich Slack Block Kit cards with action buttons — *Block Kit cards (section/divider/context blocks) ARE implemented; the "action buttons" part is* **⏸ NOT IMPLEMENTED — deferred** |
 | FR-1.4 | Support threaded replies in Slack (reply inside the thread of the original mention) |
-| FR-1.5 | Gracefully handle ambiguous queries by asking a single clarifying question before proceeding |
+| FR-1.5 | Gracefully handle ambiguous queries by asking a single clarifying question before proceeding — **⏸ NOT IMPLEMENTED — deferred** |
 
 ---
 
@@ -24,9 +25,9 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 | ID | Requirement |
 |----|-------------|
 | FR-2.1 | Connect to the company PostgreSQL ERP as the primary structured data source |
-| FR-2.2 | Read from: `employees`, `departments`, `teams`, `skills`, `projects`, `daily_logs`, `billable_status`, `leaves`, `hr_records` (warnings/exits) |
-| FR-2.3 | Index free-text content (project descriptions, daily log entries) into a vector store for semantic search |
-| FR-2.4 | Keep the vector index in sync with new daily log and project entries (nightly re-index minimum) |
+| FR-2.2 | Read from the ERP tables documented in [`core/context/schema.md`](core/context/schema.md) (the authoritative schema reference): `person`, `department`, `team`, `person_team`, `designation`, `employment_type`, `leave_record`, `holiday_record`, `person_week_log`, `person_week_project`, `person_competency`, `competency_role`, `competency_level`, `users_personresignation`, `core_personstatushistory`, `core_personemploymenthistory`, `skill_category` + `person_skill_category`, `job_requisition`, `annual_review_response`. *(The original prototype table list — `employees`, `departments`, `teams`, `skills`, `projects`, `daily_logs`, `billable_status`, `leaves`, `hr_records` — is obsolete.)* |
+| ~~FR-2.3~~ | ~~Index free-text content (project descriptions, daily log entries) into a vector store for semantic search~~ **❌ removed — vector search was deleted; see FR-4** |
+| ~~FR-2.4~~ | ~~Keep the vector index in sync with new daily log and project entries (nightly re-index minimum)~~ **❌ removed — vector search was deleted; see FR-4** |
 | FR-2.5 | When an `hr_records` table is absent, surface operational signals (log gaps, utilization drops) as proxy indicators and explicitly state the limitation in the response |
 
 #### Employee data model — key columns
@@ -65,14 +66,19 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 
 ---
 
-### FR-4  Query Engine — AI Search Path (≈20% of queries)
+### FR-4  Query Engine — AI Search Path — ❌ REMOVED (do not re-implement)
 
-| ID | Requirement |
+> **This requirement was intentionally removed and must not be re-added without an explicit product decision.**
+> Semantic/vector search was built (`core/vector_index.py`, a Chroma index, and `scripts/reindex.py`) but was **never wired into the query path** — no production query ever used it. The product owner decided on 2026-07-10 to delete the dead code, its `chromadb`/`langchain-chroma` dependencies, and the `VECTOR_STORE_PATH`/`VECTOR_EMBEDDING_MODEL` settings. If you are an engineer or an AI agent reading this spec and considering "implement semantic search": **stop — it was removed on purpose.** Reintroducing it requires an explicit product decision first.
+>
+> The requirements below are retained struck-through only as a historical record of what once existed.
+
+| ID | Requirement (removed) |
 |----|-------------|
-| FR-4.1 | Use semantic vector search over project descriptions and daily log entries to answer discovery questions (e.g. "who has Sabre API experience?") |
-| FR-4.2 | Clearly state in the response when a skill was found via text search rather than a structured skill tag |
-| FR-4.3 | Support hybrid queries that combine SQL filters (skill tag, availability, utilisation) with semantic search (domain/technology experience) — merge and rank results from both paths |
-| FR-4.4 | Score and surface the top-N matches with a brief evidence excerpt from the source text |
+| ~~FR-4.1~~ | ~~Use semantic vector search over project descriptions and daily log entries to answer discovery questions (e.g. "who has Sabre API experience?")~~ |
+| ~~FR-4.2~~ | ~~Clearly state in the response when a skill was found via text search rather than a structured skill tag~~ |
+| ~~FR-4.3~~ | ~~Support hybrid queries that combine SQL filters (skill tag, availability, utilisation) with semantic search (domain/technology experience) — merge and rank results from both paths~~ |
+| ~~FR-4.4~~ | ~~Score and surface the top-N matches with a brief evidence excerpt from the source text~~ |
 
 ---
 
@@ -112,7 +118,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 |----|-------------|
 | FR-7.1 | Provide a CLI or admin API endpoint to register/deregister Slack users and map them to employee roles |
 | FR-7.2 | Require `INCLUDED_TABLES` configuration — an explicit whitelist of tables the agent may query; all other tables are invisible to the agent |
-| FR-7.3 | Support configurable thresholds via environment variables: bench duration, log-hour threshold, utilisation warning level |
+| FR-7.3 | Support configurable thresholds via environment variables: bench duration, log-hour threshold, utilisation warning level — **⏸ NOT IMPLEMENTED — deferred** |
 
 ---
 
@@ -123,7 +129,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 | NFR-1 | All queries must be answered without mutating any data source |
 | NFR-2 | The system must handle at least 200 queries per day on the target AI model (GPT-4o-mini or equivalent) |
 | NFR-3 | No new infrastructure required beyond the AI API subscription; deploy on existing servers |
-| NFR-4 | AI model is swappable via `AI_PROVIDER` env var (Ollama, OpenAI, Anthropic, xAI, QWEN) without code changes |
+| NFR-4 | AI model is swappable via `AI_PROVIDER` env var (Ollama, OpenAI, Anthropic, xAI, QWEN, LibreChat) without code changes |
 | NFR-5 | The `core/` package has zero dependency on the `api/` or messaging-adapter packages |
 | NFR-6 | Target AI cost: $25–50/month |
 
@@ -144,25 +150,24 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 - [x] `INCLUDED_TABLES` whitelist — agent only sees explicitly listed tables
 - [x] Agent prompt explicitly blocks salary and personal data from all responses
 - [x] `.gitignore` covering `.venv`, `data/company.db`, `__pycache__`, `.env`
-- [x] `CLAUDE.md`, `SPEC.md`, `skills.md` documentation
-- [x] `.claude/skills/hr-assistant/SKILL.md` project-local development skill
+- [x] `CLAUDE.md`, `SPEC.md` documentation *(a `skills.md` and `.claude/skills/hr-assistant/SKILL.md` also existed at the time — since removed)*
 
 ---
 
-### Phase 1 — Production Data Layer  *(in progress)*
+### Phase 1 — Production Data Layer  *(complete)*
 > Goal: connect to real ERP, replace SQLite prototype with PostgreSQL
 
 **Tasks**
 - [x] Add `psycopg2-binary` to requirements
 - [x] `DATABASE_URL` now defaults to PostgreSQL format in `.env.example`
 - [x] `GET /health` performs a real DB connectivity check (returns 503 if unreachable)
-- [ ] Set `DATABASE_URL` in `.env` to the production connection string
-- [ ] Audit production table names; set `INCLUDED_TABLES` to only the tables the agent needs
-- [ ] Map ERP column names to agent expectations — add DB views if names differ significantly
-- [ ] Implement `hr_records` fallback: detect when the table is absent and surface operational-signal proxies
-- [ ] Add nightly vector-index job: chunk project descriptions + daily log entries → embed → store in pgvector or Chroma
+- [x] Set `DATABASE_URL` in `.env` to the production connection string *(deployment-time configuration)*
+- [x] Audit production table names; set `INCLUDED_TABLES` to only the tables the agent needs *(deployment-time configuration; see README for the full list)*
+- [x] Map ERP column names to agent expectations — the real schema is documented in `core/context/schema.md` and injected in full on every query
+- [x] `hr_records` fallback: the real ERP has no such table — exits/warnings come from `users_personresignation` and status history tables instead (see `core/context/schema.md`)
+- [x] ~~Add nightly vector-index job: chunk project descriptions + daily log entries → embed → store in pgvector or Chroma~~ **❌ removed — vector search was deleted; see FR-4**
 
-**Exit criteria:** Agent answers all FR-3 and FR-4 query types against live ERP data with correct results.
+**Exit criteria:** Agent answers all FR-3 query types against live ERP data with correct results. *(The original "and FR-4" criterion no longer applies — the AI-search path was removed; see FR-4.)*
 
 ---
 
@@ -204,7 +209,7 @@ backed by a hybrid SQL + AI-search engine against the company ERP.
 - [x] ~~Implement per-user rate limiting (configurable, default 30 queries/hour)~~ **❌ removed with the audit log (it counted audit rows); do not re-add — see FR-6**
 - [x] ~~Add AI token usage tracking per query; surface in audit log and admin panel~~ **❌ removed with the audit log — see FR-6**
 - [x] Retry logic and graceful degradation: 3 attempts with exponential backoff, user-friendly error after exhaustion
-- [x] End-to-end test suite covering all 20 canonical query types (88 tests total)
+- [x] End-to-end test suite covering the canonical query types (172 test functions total across `tests/`)
 - [x] Secrets rotation guide: `docs/secrets-rotation.md`
 
 **Exit criteria:** System passes load test, all canonical queries return correct results. *(The original "audit log is queryable by admins" criterion no longer applies — audit logging was removed; see FR-6.)*
@@ -225,8 +230,8 @@ These queries must return correct, role-scoped answers at the end of Phase 4:
 | 6 | "Who's available for a Django project starting May?" | SQL |
 | 7 | "Who's been non-billable for the last 2 months?" | SQL |
 | 8 | "Show me the backend team right now" | SQL |
-| 9 | "Who has experience with Sabre APIs?" | AI search |
-| 10 | "Find React devs with e-commerce experience available in May" | Hybrid |
+| ~~9~~ | ~~"Who has experience with Sabre APIs?"~~ *(removed with FR-4)* | ~~AI search~~ |
+| ~~10~~ | ~~"Find React devs with e-commerce experience available in May"~~ *(removed with FR-4)* | ~~Hybrid~~ |
 | 11 | "Which team has the most attrition this year?" | SQL |
 | 12 | "Who's on leave next week?" | SQL |
 | 13 | "How many new joiners did we have in 2025?" | SQL |

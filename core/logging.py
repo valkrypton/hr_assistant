@@ -25,8 +25,7 @@ _SHARED_PROCESSORS = [
 def configure_logging() -> None:
     """
     Configure structlog + stdlib logging. Call once at process startup
-    (api/main.py at import time, scripts/reindex.py's main()) before any
-    logger is used.
+    (api/main.py at import time) before any logger is used.
 
     DEBUG=true renders human-readable console output; otherwise renders
     single-line JSON, suitable for log aggregation in production.

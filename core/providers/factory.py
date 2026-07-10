@@ -60,5 +60,5 @@ def get_llm() -> BaseChatModel:
 
     raise ValueError(
         f"Unsupported AI provider: '{provider}'. "
-        "Choose one of: ollama, openai, anthropic, xai, qwen"
+        "Choose one of: ollama, openai, anthropic, xai, qwen, librechat"
     )

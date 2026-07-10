@@ -6,9 +6,9 @@ Natural-language workforce assistant that answers HR queries in plain English, b
 
 - **Natural language to SQL** — LangChain SQL agent translates free-text questions into safe SELECT queries
 - **Full schema context** — complete schema reference injected into every prompt; no chunking or vector search needed
-- **Multi-provider LLM** — swap between Ollama (local), OpenAI, Anthropic, xAI/Grok, or QWEN via one env var
-- **Read-only by design** — INSERT / UPDATE / DELETE / DROP are blocked at the prompt level
-- **Privacy enforcement** — salary, NIC, phone, email, and date of birth are never surfaced in responses
+- **Multi-provider LLM** — swap between Ollama (local), OpenAI, Anthropic, xAI/Grok, QWEN, or LibreChat (self-hosted gateway) via one env var — 6 providers
+- **Read-only by design** — non-SELECT statements (INSERT / UPDATE / DELETE / DROP / …) are rejected by a sqlglot-based SQL guard (`core/rbac/sql_guard.py`) before execution; the agent prompt also instructs read-only behavior as advisory defense-in-depth
+- **Privacy enforcement** — salary/compensation, national ID (NIC/CNIC), bank details, home/personal address, personal phone, personal email, date of birth, passport number, and medical records are never surfaced in responses (see `FORBIDDEN_COLUMNS` in `core/rbac/context.py`)
 - **Table whitelist** — only tables listed in `INCLUDED_TABLES` are visible to the agent
 
 ## Architecture
@@ -18,8 +18,7 @@ core/   — AI agent logic (zero dependency on api/)
   agent.py                — LangChain SQL agent; injects full schema.md on every query
   config.py               — Settings (pydantic-settings), loaded from .env
   rbac/models.py          — SQLAlchemy models (source of truth for the DB schema)
-  providers/factory.py    — LLM factory (Ollama / OpenAI / Anthropic / xAI / QWEN)
-  vector_index.py         — Chroma index over team/project descriptions (FR-4 semantic search)
+  providers/factory.py    — LLM factory (Ollama / OpenAI / Anthropic / xAI / QWEN / LibreChat)
   context/
     schema.md             — Authoritative schema reference (tables, columns, business rules)
 
@@ -38,7 +37,12 @@ migrations/                — Alembic migrations (schema source of truth going 
 alembic.ini
 
 scripts/
-  reindex.py              — Rebuild ERP content Chroma index (run nightly)
+  seed_erp.py             — Create + seed a local ERP database with synthetic data
+  create_admin.py         — Create / list / deactivate admin users (Basic Auth + /admin login)
+  check_migration_naming.sh — Pre-commit hook: enforce NNNN_slug.py migration names
+
+Dockerfile                 — Container image (uv sync --frozen --no-dev, uvicorn on $PORT)
+railway.toml               — Railway deploy config (healthcheck on /health)
 
 index.html                — Single-file web UI (no server needed, works from file://)
 ```
@@ -64,8 +68,11 @@ Edit `.env`:
 | `INCLUDED_TABLES` | Comma-separated whitelist of tables the agent may query |
 | `SLACK_BOT_TOKEN` | Slack bot OAuth token (`xoxb-…`) |
 | `SLACK_SIGNING_SECRET` | Slack signing secret for request verification |
-| `VECTOR_STORE_PATH` | Where to persist Chroma DB for ERP semantic search (default: `./data/chroma`) |
-| `VECTOR_EMBEDDING_MODEL` | Ollama embedding model for ERP search (default: `nomic-embed-text`) |
+| `SECRET_KEY` | Signs admin session cookies (`/admin` panel). Required in production (startup error when `DEBUG=false` and unset) — generate with `openssl rand -hex 32` |
+| `DEBUG` | Default `false`. `true` enables verbose agent logging, console-format logs, and the dev-only allowances below |
+| `ALLOW_UNAUTHENTICATED_QUERY` | Dev-only. `true` lets `POST /query` run without admin auth. Startup `RuntimeError` if `true` while `DEBUG=false` (`core/config.py:146-153`) |
+| `CORS_ALLOW_ORIGINS` | Comma-separated browser origins. Default `*` — wildcard is forbidden in production (startup error when `DEBUG=false`, `core/config.py:174-181`) |
+| `TRUSTED_PROXY_HOSTS` | Proxy/load-balancer hosts trusted for `X-Forwarded-*` headers (default `127.0.0.1`) |
 
 Create the app-DB tables (`hr_admin_users`, `hr_assistant_users`):
 
@@ -114,17 +121,6 @@ This creates all ERP tables and populates them with 500 employees (420 active, 8
 INCLUDED_TABLES=department,employment_type,competency_role,competency_level,designation,leave_type,skill_category,person,team,person_team,leave_limit,person_leave_limit,leave_record,holiday_record,person_week_log,person_week_project,person_competency,users_personresignation,core_personstatushistory,core_personemploymenthistory,core_personemploymenttypehistory,person_skill_category,job_requisition,annual_review_response
 ```
 
-### ERP semantic search index (FR-4 only)
-
-Only needed if you want "who has Sabre API experience?"-style queries over free-text project/log data:
-
-```bash
-ollama pull nomic-embed-text          # 274 MB embedding model
-uv run python scripts/reindex.py      # index team/project descriptions
-```
-
-Schedule `scripts/reindex.py` nightly to keep the index fresh.
-
 ## Running
 
 ```bash
@@ -135,7 +131,67 @@ open index.html    # or just open in your browser — no server needed
 - API: `http://localhost:8000`
 - Docs: `http://localhost:8000/docs`
 - Admin: `http://localhost:8000/admin`
-- Health check: `GET /health` — returns 503 if DB is unreachable
+- Health check: `GET /health` — checks BOTH databases; returns `{"status":"ok","erp_database":"connected","app_database":"connected"}`, or 503 if either database is unreachable
+
+## API
+
+### `POST /query`
+
+Natural-language HR query. **Requires admin HTTP Basic Auth by default** (`require_admin_unless_open`, `api/deps.py:57-69`); only `ALLOW_UNAUTHENTICATED_QUERY=true` (dev-only) disables it.
+
+`slack_user_id` in the body selects the RBAC scope of a *registered* user — it is **NOT authentication** (Slack IDs are public within a workspace). **If you omit `slack_user_id`, the query runs unrestricted** (no RBAC scoping) — be deliberate about that. End-user traffic should go through the signature-verified Slack webhook instead.
+
+```bash
+curl -X POST http://localhost:8000/query \
+  -u admin:yourpassword \
+  -H "Content-Type: application/json" \
+  -d '{"query": "How many employees do we have?", "slack_user_id": "U012AB3CD"}'
+```
+
+### `/users`
+
+All `/users` routes require admin HTTP Basic Auth. Create an admin first:
+
+```bash
+uv run python scripts/create_admin.py <username>
+```
+
+| Route | Behavior |
+|---|---|
+| `GET /users` | Returns **active users only** |
+| `POST /users` | Registers a user — `201` on success, `409` if the `slack_user_id` is already registered |
+| `DELETE /users/{id}` | **Soft-deletes** (sets `is_active=false`) — `204` on success, `404` if not found |
+
+```bash
+curl -u admin:yourpassword -X POST http://localhost:8000/users \
+  -H "Content-Type: application/json" \
+  -d '{"employee_id": 1, "role": "hr_manager", "slack_user_id": "U012AB3CD"}'
+```
+
+### `GET /health`
+
+Public (no auth). Pings both the ERP and app databases:
+
+```json
+{"status": "ok", "erp_database": "connected", "app_database": "connected"}
+```
+
+Returns `503` if either database is unreachable.
+
+### Administration
+
+Admin users power **two separate auth mechanisms**, both backed by the same `hr_admin_users` table:
+
+1. **HTTP Basic Auth** on the `/users` and `/query` API routes (credentials checked per request).
+2. **Session-cookie login form** on the `/admin` panel (SQLAdmin; cookie signed with `SECRET_KEY`).
+
+Manage admins with the CLI:
+
+```bash
+uv run python scripts/create_admin.py <username>       # create (prompts for password)
+uv run python scripts/create_admin.py --list           # list all admins
+uv run python scripts/create_admin.py --deactivate <username>  # revoke access
+```
 
 ## Slack Setup
 
@@ -197,11 +253,11 @@ Save changes.
 
 ### 7. Register users
 
-The bot enforces RBAC — every Slack user must be registered with a role before they can query. Use the API:
+The bot enforces RBAC — every Slack user must be registered with a role before they can query. The `/users` API requires admin Basic Auth — create an admin first with `uv run python scripts/create_admin.py <username>`, then:
 
 ```bash
 # Register a user (replace values as needed)
-curl -X POST http://localhost:8000/users \
+curl -u admin:yourpassword -X POST http://localhost:8000/users \
   -H "Content-Type: application/json" \
   -d '{
     "employee_id": 1,
@@ -246,9 +302,35 @@ Show resignations by department
 How many new joiners did we have in 2025?
 Which team has the most attrition this year?
 Who's available for a Django project starting May?
-Who has experience with Sabre APIs?
 What is Bilal Qureshi's competency score?
 ```
+
+## Testing
+
+```bash
+uv run pytest              # full suite with coverage; HTML + JUnit reports land in reports/
+uv run pytest --no-cov -q  # quick run, no coverage
+```
+
+Coverage and test reports are written to `reports/` (`reports/coverage/html`, `reports/coverage/coverage.xml`, `reports/unittests/html`, `reports/unittests/junit.xml`) per `[tool.pytest.ini_options]` in `pyproject.toml`. The pre-push git hook runs the full suite automatically before `git push`.
+
+Test files:
+
+- `tests/test_rbac.py` — role scoping, forbidden columns, SQL guard
+- `tests/test_scope_execution.py` — DB-layer scope enforcement proofs
+- `tests/test_sql_guard_dangerous_functions.py` — dangerous SQL function blocking
+- `tests/test_e2e.py` — end-to-end canonical query coverage
+- `tests/test_agent_scoped_run.py` — agent RBAC integration
+- `tests/test_config_guards.py` — production startup guards
+- `tests/test_slack_adapter.py`, `tests/test_slack_dedupe.py` — Slack webhook handling
+
+## Observability
+
+Per-query latency and token counts are emitted to the server logs via structlog only — nothing is persisted (audit logging was deliberately removed; see SPEC.md FR-6). `DEBUG=true` renders human-readable console logs; otherwise logs are single-line JSON.
+
+## Deployment
+
+See [docs/deployment.md](docs/deployment.md) — Docker image, Railway config, and the production startup checklist (`SECRET_KEY`, `APP_DATABASE_URL`, CORS, auth guards).
 
 ## Development Phases
 
@@ -258,5 +340,7 @@ What is Bilal Qureshi's competency score?
 | 1 — Production Data Layer | Complete | Real PostgreSQL ERP, full schema context |
 | 2 — RBAC | Complete | Role-scoped answers per requester |
 | 3 — Slack | Complete | `@hr-agent` mentions with Block Kit cards |
-| 4 — Hardening | Complete | Rate limits, token tracking, retry logic, E2E tests |
+| 4 — Hardening | Complete | Retry logic, E2E tests, secrets rotation guide |
 | 5 — Backend structure | Complete | Alembic migrations, `services/`/`schemas/` layering, typed DB-session dependency, pydantic-settings config |
+
+> Note: per-user rate limiting and audit/token-usage tracking were built during Phase 4 and then **deliberately removed** (query recording is not wanted) — see [SPEC.md FR-6](SPEC.md) before considering re-adding either.
