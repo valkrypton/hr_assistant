@@ -69,9 +69,8 @@ Edit `.env`:
 | `SLACK_BOT_TOKEN` | Slack bot OAuth token (`xoxb-…`) |
 | `SLACK_SIGNING_SECRET` | Slack signing secret for request verification |
 | `SECRET_KEY` | Signs admin session cookies (`/admin` panel). Required in production (startup error when `DEBUG=false` and unset) — generate with `openssl rand -hex 32` |
-| `DEBUG` | Default `false`. `true` enables verbose agent logging, console-format logs, and the dev-only allowances below |
-| `ALLOW_UNAUTHENTICATED_QUERY` | Dev-only. `true` lets `POST /query` run without admin auth. Startup `RuntimeError` if `true` while `DEBUG=false` (`core/config.py:146-153`) |
-| `CORS_ALLOW_ORIGINS` | Comma-separated browser origins. Default `*` — wildcard is forbidden in production (startup error when `DEBUG=false`, `core/config.py:174-181`) |
+| `DEBUG` | Default `false`. `true` enables verbose agent logging and console-format logs, and relaxes the production startup guards (`core/config.py`) |
+| `CORS_ALLOW_ORIGINS` | Comma-separated browser origins. Default `*` — wildcard is forbidden in production (startup error when `DEBUG=false`, see `core/config.py`) |
 | `TRUSTED_PROXY_HOSTS` | Proxy/load-balancer hosts trusted for `X-Forwarded-*` headers (default `127.0.0.1`) |
 
 Create the app-DB tables (`hr_admin_users`, `hr_assistant_users`):
@@ -137,7 +136,7 @@ open index.html    # or just open in your browser — no server needed
 
 ### `POST /query`
 
-Natural-language HR query. **Requires admin HTTP Basic Auth by default** (`require_admin_unless_open`, `api/deps.py:57-69`); only `ALLOW_UNAUTHENTICATED_QUERY=true` (dev-only) disables it.
+Natural-language HR query. **Always requires admin HTTP Basic Auth** (`require_admin`, `api/deps.py`) — this cannot be disabled. The bundled `index.html` prompts for credentials on first use and keeps them in memory only.
 
 `slack_user_id` in the body selects the RBAC scope of a *registered* user — it is **NOT authentication** (Slack IDs are public within a workspace). **If you omit `slack_user_id`, the query runs unrestricted** (no RBAC scoping) — be deliberate about that. End-user traffic should go through the signature-verified Slack webhook instead.
 

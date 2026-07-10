@@ -32,7 +32,7 @@ The app **fails fast at startup** when `DEBUG=false` (the default) and any of th
 
 - [ ] `SECRET_KEY` is set (and not a placeholder like `change-me-in-production`). Generate with `openssl rand -hex 32`. Without it, admin sessions break across restarts/workers.
 - [ ] `APP_DATABASE_URL` is set explicitly (there is no fallback to `DATABASE_URL`, and it must **not equal** `DATABASE_URL` — the writable app DB must be a separate connection from the read-only ERP).
-- [ ] `ALLOW_UNAUTHENTICATED_QUERY` is unset or `false` — setting it `true` with `DEBUG=false` raises a startup `RuntimeError` (it would disable `/query` authentication).
+- [ ] Nothing to configure for `/query` auth — it **always** requires admin HTTP Basic Auth and cannot be disabled (the former dev-only escape-hatch env var was removed by product decision).
 - [ ] `CORS_ALLOW_ORIGINS` contains no `*` — set an explicit comma-separated list of frontend origins.
 
 ## Environment variables to set

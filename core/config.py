@@ -78,19 +78,17 @@ class Settings(BaseSettings):
     # or multi-worker deploys.
     SECRET_KEY: str = ""
 
-    # Debug — enables verbose agent logging and unauthenticated /query access.
+    # Debug — enables verbose agent logging and console-format log output.
     DEBUG: bool = False
-    ALLOW_UNAUTHENTICATED_QUERY: bool = False
 
-    @field_validator("DEBUG", "ALLOW_UNAUTHENTICATED_QUERY", mode="before")
+    @field_validator("DEBUG", mode="before")
     @classmethod
     def _strict_bool_from_str(cls, v):
         """Only the literal string "true" (case-insensitive) is True — matches
         the previous os.getenv(...).lower() == "true" parser. Pydantic's
         default bool coercion also accepts "1"/"yes"/"on"/"y"/"t", which would
-        silently widen what counts as enabled here — security-relevant for
-        ALLOW_UNAUTHENTICATED_QUERY (bypasses /query auth) and the DEBUG-gated
-        SECRET_KEY guard below."""
+        silently widen what counts as enabled here — security-relevant because
+        DEBUG gates the production guards below (e.g. the SECRET_KEY check)."""
         if isinstance(v, str):
             return v.strip().lower() == "true"
         return v
@@ -137,15 +135,6 @@ class Settings(BaseSettings):
                 raise RuntimeError(
                     "SECRET_KEY uses a known-weak placeholder value. "
                     "Run: export SECRET_KEY=$(openssl rand -hex 32)"
-                )
-
-            # ALLOW_UNAUTHENTICATED_QUERY removes all auth from /query and trusts
-            # the request-supplied slack_user_id to select an RBAC scope — a full
-            # data breach if enabled with a reachable endpoint. Dev-only.
-            if self.ALLOW_UNAUTHENTICATED_QUERY:
-                raise RuntimeError(
-                    "ALLOW_UNAUTHENTICATED_QUERY=true is not allowed when DEBUG is false: "
-                    "it disables /query authentication. Unset it in production."
                 )
 
             # APP_DATABASE_URL must be set explicitly in production (see the

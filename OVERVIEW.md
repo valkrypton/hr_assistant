@@ -19,7 +19,7 @@ There are two ways to talk to HR Assistant:
 Mention `@HR Assistant` in any channel, or send it a direct message. It replies in the same thread within seconds.
 
 **2. Web browser**
-Open the HR Assistant web page and type your question directly. API queries require admin credentials unless the server runs in a development "open" mode; Slack users are identified automatically by their Slack account.
+Open the HR Assistant web page and type your question directly. API queries always require admin credentials; Slack users are identified automatically by their Slack account.
 
 ---
 
