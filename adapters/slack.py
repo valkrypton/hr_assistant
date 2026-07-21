@@ -20,9 +20,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ssl
 import time
 from contextlib import contextmanager
+from functools import lru_cache
 
+import certifi
+import sqlalchemy
 import structlog
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -151,11 +155,11 @@ def _format_blocks(answer: str) -> list[dict]:
 
 
 def _get_app_engine():
-    import sqlalchemy
-
     global _app_engine
     if _app_engine is None:
-        _app_engine = sqlalchemy.create_engine(settings.APP_DATABASE_URL)
+        _app_engine = sqlalchemy.create_engine(
+            settings.APP_DATABASE_URL, pool_pre_ping=True, pool_recycle=300
+        )
     return _app_engine
 
 
@@ -182,6 +186,22 @@ def _lookup_user(session: Session, slack_user_id: str) -> HRUser | None:
 # ---------------------------------------------------------------------------
 
 _HISTORY_MAX_TURNS = 10  # max prior turns to include (5 exchanges)
+
+
+@lru_cache(maxsize=1)
+def _slack_client() -> WebClient:
+    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    return WebClient(token=settings.SLACK_BOT_TOKEN, ssl=ssl_ctx)
+
+
+@lru_cache(maxsize=1)
+def _bot_user_id() -> str | None:
+    """The bot's own Slack user ID — fixed for the process lifetime, so
+    fetched via auth_test() once instead of on every event."""
+    try:
+        return _slack_client().auth_test()["user_id"]
+    except Exception:
+        return None
 
 
 def _fetch_thread_history(
@@ -272,12 +292,7 @@ def process_event(
     This function is intentionally synchronous so it can be called from a
     FastAPI BackgroundTask without requiring an event loop.
     """
-    import ssl
-
-    import certifi
-
-    ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-    client = WebClient(token=settings.SLACK_BOT_TOKEN, ssl=ssl_ctx)
+    client = _slack_client()
 
     # Resolve identity in one short-lived session,
     # closed before any Slack API call or the agent_query() call below —
@@ -314,12 +329,9 @@ def process_event(
 
     rbac_ctx = RBACContext.for_user(hr_user)
 
-    # Fetch bot's own user ID once so we can identify its messages in the thread.
+    # Bot's own user ID — used to identify its messages in the thread.
     t_history = time.monotonic()
-    try:
-        bot_user_id = client.auth_test()["user_id"]
-    except Exception:
-        bot_user_id = None
+    bot_user_id = _bot_user_id()
 
     # Fetch prior thread turns for conversation continuity.
     conversation_history = _fetch_thread_history(

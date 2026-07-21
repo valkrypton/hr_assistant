@@ -1,18 +1,14 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from api.deps import require_admin_unless_open
+from api.deps import OptionalAdminDep
 from api.schemas.query import QueryRequest, QueryResponse
 from api.services.query_service import run_query as run_query_service
-from core.rbac.models import AdminUser
 
 router = APIRouter()
 
 
-@router.post("/query", response_model=QueryResponse)
-def run_query(
-    body: QueryRequest,
-    admin: AdminUser | None = Depends(require_admin_unless_open),
-):
+@router.post("/query")
+def run_query(body: QueryRequest, admin: OptionalAdminDep) -> QueryResponse:
     """
     Natural-language HR query endpoint.
 

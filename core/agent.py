@@ -5,15 +5,23 @@ This module has NO dependency on the API layer.  It can be imported and used
 standalone (scripts, tests, notebooks) without starting a web server.
 """
 
+import copy
+import re
 import time
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 
+import sqlglot
+import sqlglot.expressions as exp
 import structlog
 from langchain_community.agent_toolkits import create_sql_agent
+from langchain_community.callbacks import get_openai_callback
 from langchain_community.utilities import SQLDatabase
 
 from core.config import settings
 from core.providers.factory import get_llm
+from core.rbac.context import FORBIDDEN_COLUMNS
 
 logger = structlog.get_logger(__name__)
 
@@ -36,8 +44,6 @@ class QueryResult:
 
 
 def _forbidden_columns_str() -> str:
-    from core.rbac.context import FORBIDDEN_COLUMNS
-
     return ", ".join(sorted(FORBIDDEN_COLUMNS))
 
 
@@ -136,21 +142,49 @@ NO hr_records TABLE: For warnings/disciplinary queries use these proxies instead
 # ---------------------------------------------------------------------------
 
 
-def _check_hr_records_available(db: SQLDatabase) -> bool:
-    try:
-        db.run("SELECT 1 FROM hr_records LIMIT 1")
-        return True
-    except Exception:
-        return False
-
-
 def _get_included_tables() -> list[str]:
     if not settings.INCLUDED_TABLES:
         raise ValueError(
             "INCLUDED_TABLES must be set in .env. "
             "List only the tables the agent needs (e.g. person,department,leave_record)."
         )
-    return list(settings.INCLUDED_TABLES)
+    return settings.included_tables
+
+
+# ---------------------------------------------------------------------------
+# ERP SQLDatabase — built once per (url, tables), not once per request.
+#
+# from_uri() does create_engine() + a full MetaData.reflect() over every
+# included table (lazy_table_reflection defaults to false). Building it per
+# restricted-role request meant every dept_head/team_lead query paid that
+# cost and leaked an undisposed engine. Cached here and shallow-copied per
+# build so each caller gets its own `.run` (see _build_agent) while sharing
+# the underlying engine/pool and reflected metadata. Keyed on (url, tables)
+# rather than no-args so tests pointing at a throwaway sqlite file per test
+# don't collide with each other or with the real ERP connection.
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=8)
+def _erp_db(database_url: str, included_tables: tuple[str, ...]) -> SQLDatabase:
+    return SQLDatabase.from_uri(
+        database_url,
+        include_tables=list(included_tables),
+        sample_rows_in_table_info=0,
+        engine_args={"pool_pre_ping": True, "pool_recycle": 300},
+    )
+
+
+@lru_cache(maxsize=8)
+def _hr_records_available(database_url: str, included_tables: tuple[str, ...]) -> bool:
+    """Whether the hr_records table exists in the ERP schema — a fixed fact
+    about the database, not the requester's role, so probed once via the
+    unscoped connection rather than per built agent."""
+    try:
+        _erp_db(database_url, included_tables).run("SELECT 1 FROM hr_records LIMIT 1")
+        return True
+    except Exception:
+        return False
 
 
 def _build_agent(rbac_ctx=None):
@@ -169,13 +203,13 @@ def _build_agent(rbac_ctx=None):
     both protections immune to prompt injection.
     """
     llm = get_llm()
-    included = _get_included_tables()
-    db = SQLDatabase.from_uri(
-        settings.DATABASE_URL,
-        include_tables=included,
-        sample_rows_in_table_info=0,
-    )
+    included = tuple(_get_included_tables())
+    db = copy.copy(_erp_db(settings.DATABASE_URL, included))
 
+    # Imported per-call (not hoisted to module level) so tests can patch
+    # core.rbac.sql_guard.rewrite_sql before this runs — see
+    # tests/test_agent_scoped_run.py._build_scoped_db for why a module-level
+    # alias would not be patchable the same way.
     from core.rbac.sql_guard import rewrite_sql as _rewrite
 
     _original_run = db.run
@@ -193,7 +227,9 @@ def _build_agent(rbac_ctx=None):
 
     db.run = _scoped_run
 
-    hr_records_note = "" if _check_hr_records_available(db) else _HR_RECORDS_NOTE
+    hr_records_note = (
+        "" if _hr_records_available(settings.DATABASE_URL, included) else _HR_RECORDS_NOTE
+    )
 
     if rbac_ctx is None or rbac_ctx.is_unrestricted:
         rbac_prefix = _UNRESTRICTED_RBAC
@@ -259,8 +295,6 @@ def get_agent(rbac_ctx=None):
 
 def _regex_extract_tables(sql: str) -> set[str]:
     """Fallback extractor — identifiers after FROM/JOIN keywords via regex."""
-    import re
-
     tables: set[str] = set()
     for match in re.finditer(r'\b(?:FROM|JOIN)\s+([`"\[]?[\w]+[`"\]]?)', sql, re.IGNORECASE):
         tables.add(match.group(1).strip('`"[]'))
@@ -281,9 +315,6 @@ def _extract_tables(intermediate_steps) -> str:
     real tables. Falls back to a regex over FROM/JOIN on parse failure so
     table extraction never breaks on unusual SQL.
     """
-    import sqlglot
-    import sqlglot.expressions as exp
-
     tables: set[str] = set()
     for action, _ in intermediate_steps or []:
         tool = getattr(action, "tool", None)
@@ -311,6 +342,12 @@ def _extract_tables(intermediate_steps) -> str:
     return ", ".join(sorted(tables)) if tables else ""
 
 
+@lru_cache(maxsize=1)
+def _load_schema_block() -> str:
+    schema_path = Path(__file__).parent / "context" / "schema.md"
+    return schema_path.read_text() if schema_path.exists() else ""
+
+
 # ---------------------------------------------------------------------------
 # Query — retrieve schema context at call time, inject into user message
 # ---------------------------------------------------------------------------
@@ -334,16 +371,14 @@ def query(
 
     Returns a QueryResult with answer, tables_accessed, and latency breakdown.
     """
-    from pathlib import Path
-
     t_total_start = time.monotonic()
 
     # Step 1: Load full schema — small enough (~3k tokens) to inject entirely.
     # No chunking/RAG needed; the full schema is injected directly, avoiding
-    # lossy retrieval.
+    # lossy retrieval. Cached after the first read — schema.md doesn't change
+    # while the process is running.
     t_rag_start = time.monotonic()
-    _schema_path = Path(__file__).parent / "context" / "schema.md"
-    schema_block = _schema_path.read_text() if _schema_path.exists() else ""
+    schema_block = _load_schema_block()
     schema_rag_ms = int((time.monotonic() - t_rag_start) * 1000)
 
     # Step 2: Build enriched message
@@ -377,8 +412,6 @@ def query(
             )
             time.sleep(wait)
         try:
-            from langchain_community.callbacks import get_openai_callback
-
             with get_openai_callback() as cb:
                 result = get_agent(rbac_ctx).invoke({"input": enriched_input})
             prompt_tokens = cb.prompt_tokens

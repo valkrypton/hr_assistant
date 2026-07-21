@@ -75,7 +75,7 @@ class TestProdGuards:
         settings = Settings(_env_file=None)
 
         assert settings.APP_DATABASE_URL == "postgres://app"
-        assert settings.CORS_ALLOW_ORIGINS == ["https://example.com"]
+        assert settings.cors_allow_origins == ["https://example.com"]
 
     def test_wildcard_cors_in_multi_origin_list_raises(self, monkeypatch):
         _clear_guarded_env(monkeypatch)

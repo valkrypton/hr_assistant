@@ -72,13 +72,13 @@ def require_admin_unless_open(
 @lru_cache(maxsize=1)
 def app_engine():
     """Writable engine for our own tables (hr_assistant_users, hr_admin_users)."""
-    return sqlalchemy.create_engine(settings.APP_DATABASE_URL)
+    return sqlalchemy.create_engine(settings.APP_DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 
 
 @lru_cache(maxsize=1)
 def erp_engine():
     """Read-only ERP engine — used only for the health check."""
-    return sqlalchemy.create_engine(settings.DATABASE_URL)
+    return sqlalchemy.create_engine(settings.DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 
 
 @contextmanager
@@ -97,3 +97,4 @@ def get_db() -> Iterator[Session]:
 
 
 DbDep = Annotated[Session, Depends(get_db)]
+OptionalAdminDep = Annotated[AdminUser | None, Depends(require_admin_unless_open)]

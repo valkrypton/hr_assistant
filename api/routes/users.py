@@ -7,14 +7,14 @@ from api.services import user_service
 router = APIRouter(prefix="/users", dependencies=[Depends(require_admin)])
 
 
-@router.get("", response_model=list[UserResponse])
-def list_users(session: DbDep):
+@router.get("")
+def list_users(session: DbDep) -> list[UserResponse]:
     """List all active HR agent users."""
     return user_service.list_users(session)
 
 
-@router.post("", response_model=UserResponse, status_code=201)
-def register_user(body: UserCreate, session: DbDep):
+@router.post("", status_code=201)
+def register_user(body: UserCreate, session: DbDep) -> UserResponse:
     """Register an employee as an HR agent user with a given role."""
     return user_service.register_user(session, body)
 

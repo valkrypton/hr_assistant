@@ -55,7 +55,7 @@ def _build_scoped_db(sqlite_db_url):
         return db
 
     with (
-        patch.object(settings, "INCLUDED_TABLES", ["person"]),
+        patch.object(settings, "INCLUDED_TABLES", "person"),
         patch.object(settings, "DATABASE_URL", sqlite_db_url),
         patch("core.agent.get_llm", return_value=object()),
         patch("core.agent.create_sql_agent", side_effect=_fake_create_sql_agent),
@@ -90,3 +90,68 @@ class TestScopedRunErrorHandling:
             db = _build_scoped_db(sqlite_db_url)
             result = db.run("SELECT id FROM person")
         assert result == "Error: boom: guard tripped"
+
+
+class TestErpDbCaching:
+    """
+    Regression tests for the engine/reflection caching fix: get_agent() used
+    to call SQLDatabase.from_uri() (create_engine + full MetaData.reflect())
+    on every restricted-role build, since only the unrestricted agent was
+    cached — see core/agent.py:_erp_db. Each test uses its own throwaway
+    sqlite file (sqlite_db_url), so the lru_cache key never collides across
+    tests despite being process-wide.
+    """
+
+    def test_build_agent_reuses_cached_erp_db_across_calls(self, sqlite_db_url):
+        import core.agent as agent_mod
+        from core.config import settings
+
+        def _fake_create_sql_agent(llm, db, **kwargs):
+            return db
+
+        with (
+            patch.object(settings, "INCLUDED_TABLES", "person"),
+            patch.object(settings, "DATABASE_URL", sqlite_db_url),
+            patch("core.agent.get_llm", return_value=object()),
+            patch("core.agent.create_sql_agent", side_effect=_fake_create_sql_agent),
+            patch.object(
+                agent_mod.SQLDatabase, "from_uri", wraps=agent_mod.SQLDatabase.from_uri
+            ) as from_uri_spy,
+        ):
+            # Simulates the shared unrestricted build plus two restricted
+            # (dept_head / team_lead) builds against the same ERP target.
+            agent_mod._build_agent(None)
+            agent_mod._build_agent(None)
+            agent_mod._build_agent(None)
+
+        assert from_uri_spy.call_count == 1
+
+    def test_scoped_builds_get_independent_run_wrappers(self, sqlite_db_url):
+        """The cached SQLDatabase is shallow-copied per build (copy.copy), so
+        each build's db.run monkeypatch is independent and doesn't leak onto
+        the shared cached instance or onto other builds."""
+        import core.agent as agent_mod
+        from core.config import settings
+
+        def _fake_create_sql_agent(llm, db, **kwargs):
+            return db
+
+        with (
+            patch.object(settings, "INCLUDED_TABLES", "person"),
+            patch.object(settings, "DATABASE_URL", sqlite_db_url),
+            patch("core.agent.get_llm", return_value=object()),
+            patch("core.agent.create_sql_agent", side_effect=_fake_create_sql_agent),
+        ):
+            db_a = agent_mod._build_agent(None)
+            db_b = agent_mod._build_agent(None)
+
+        assert db_a is not db_b
+        assert db_a.run is not db_b.run
+
+    def test_erp_db_engine_has_pool_pre_ping_and_recycle(self, sqlite_db_url):
+        import core.agent as agent_mod
+
+        db = agent_mod._erp_db(sqlite_db_url, ("person",))
+
+        assert db._engine.pool._pre_ping is True
+        assert db._engine.pool._recycle == 300

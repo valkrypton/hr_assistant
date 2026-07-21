@@ -53,8 +53,9 @@ class Settings(BaseSettings):
     # "*" is fine for local dev (index.html); set to the real frontend
     # origin(s) in production.
     # Declared as `str` (not `list[str]`) so pydantic-settings doesn't attempt
-    # to JSON-decode the env value — comma-splitting happens in
-    # _parse_comma_separated below, same as the previous plain-class behavior.
+    # to JSON-decode the env value — the raw string is parsed into a list by
+    # the cors_allow_origins property below, which every call site uses
+    # instead of this field directly.
     CORS_ALLOW_ORIGINS: str = "*"
 
     # ERP database — read-only; used exclusively by the SQL agent.
@@ -64,7 +65,8 @@ class Settings(BaseSettings):
     # Required — no fallback to DATABASE_URL.
     APP_DATABASE_URL: str = ""
 
-    # Whitelist: only these tables are visible to the agent.
+    # Whitelist: only these tables are visible to the agent. Raw comma-separated
+    # string — parsed into a list by the included_tables property below.
     # All other tables in the database are invisible to the agent.
     INCLUDED_TABLES: str = ""
 
@@ -95,16 +97,22 @@ class Settings(BaseSettings):
             return v.strip().lower() == "true"
         return v
 
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        """CORS_ALLOW_ORIGINS parsed into a list — every call site uses this,
+        not the raw field, so the `str` annotation above never lies about
+        what's stored (pydantic doesn't validate attribute assignment by
+        default, so mutating the field in place to a list would silently
+        defeat its own type)."""
+        return [o.strip() for o in self.CORS_ALLOW_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def included_tables(self) -> list[str]:
+        """INCLUDED_TABLES parsed into a list — see cors_allow_origins above."""
+        return [t.strip() for t in self.INCLUDED_TABLES.split(",") if t.strip()]
+
     @model_validator(mode="after")
     def _apply_fallbacks_and_guards(self) -> "Settings":
-        # CORS_ALLOW_ORIGINS / INCLUDED_TABLES arrive as comma-separated strings;
-        # split them here (once, at construction) into the list[str] shape every
-        # call site expects.
-        self.CORS_ALLOW_ORIGINS = [
-            o.strip() for o in self.CORS_ALLOW_ORIGINS.split(",") if o.strip()
-        ]
-        self.INCLUDED_TABLES = [t.strip() for t in self.INCLUDED_TABLES.split(",") if t.strip()]
-
         # DATABASE_URL falls back to the local sqlite ERP db in dev.
         if not self.DATABASE_URL:
             self.DATABASE_URL = "sqlite:///./data/company.db"
@@ -170,7 +178,7 @@ class Settings(BaseSettings):
             # A wildcard CORS origin should never ship to production; require an
             # explicit allowlist. Catch "*" anywhere in the list — Starlette
             # treats a single "*" element as allow-all.
-            if "*" in self.CORS_ALLOW_ORIGINS:
+            if "*" in self.cors_allow_origins:
                 raise RuntimeError(
                     "CORS_ALLOW_ORIGINS must not contain '*' when DEBUG is false. "
                     "Set an explicit comma-separated list of frontend origins."
