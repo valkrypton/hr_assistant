@@ -357,6 +357,58 @@ class TestAdminAuth:
         }
         assert client.get("/users", headers=bad_headers).status_code == 401
 
+    def test_repeated_failures_lock_out_then_clear(self, client):
+        """Uses a dedicated throwaway username — not _ADMIN_CREDS — so this
+        can't lock out the real admin used by every other test in this
+        module (test order matters: TestUserAdmin etc. run after this and
+        reuse _ADMIN_CREDS)."""
+        import base64
+
+        from core.auth import _LOCKOUT_THRESHOLD, clear_failed_logins
+
+        username = "lockout-test-user"
+        clear_failed_logins(username)
+        bad_headers = {
+            "Authorization": "Basic "
+            + base64.b64encode(f"{username}:wrong-password".encode()).decode()
+        }
+        try:
+            for _ in range(_LOCKOUT_THRESHOLD):
+                r = client.get("/users", headers=bad_headers)
+                assert r.status_code == 401
+
+            locked_out = client.get("/users", headers=bad_headers)
+            assert locked_out.status_code == 401
+            assert "Too many failed" in locked_out.json()["detail"]
+        finally:
+            clear_failed_logins(username)
+
+
+# ---------------------------------------------------------------------------
+# Security headers + CORS
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityHeaders:
+    def test_security_headers_present_on_response(self, client):
+        r = client.get("/health")
+        assert r.headers["x-content-type-options"] == "nosniff"
+        assert r.headers["x-frame-options"] == "DENY"
+        assert r.headers["referrer-policy"] == "no-referrer"
+        assert "max-age=63072000" in r.headers["strict-transport-security"]
+
+    def test_cors_methods_are_narrowed(self, client):
+        r = client.options(
+            "/query",
+            headers={
+                "Origin": "http://localhost",
+                "Access-Control-Request-Method": "PUT",
+            },
+        )
+        allowed = r.headers.get("access-control-allow-methods", "")
+        assert "PUT" not in allowed
+        assert "POST" in allowed
+
 
 # ---------------------------------------------------------------------------
 # User admin endpoints

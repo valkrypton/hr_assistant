@@ -189,7 +189,7 @@ _HISTORY_MAX_TURNS = 10  # max prior turns to include (5 exchanges)
 @lru_cache(maxsize=1)
 def _slack_client() -> WebClient:
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-    return WebClient(token=settings.SLACK_BOT_TOKEN, ssl=ssl_ctx)
+    return WebClient(token=settings.SLACK_BOT_TOKEN.get_secret_value(), ssl=ssl_ctx)
 
 
 _bot_user_id_cache: str | None = None

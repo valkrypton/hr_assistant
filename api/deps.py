@@ -15,7 +15,13 @@ from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 
-from core.auth import hash_password, verify_password
+from core.auth import (
+    clear_failed_logins,
+    hash_password,
+    is_locked_out,
+    record_failed_login,
+    verify_password,
+)
 from core.config import DEFAULT_ENGINE_ARGS, settings
 from core.rbac.models import AdminUser
 
@@ -35,6 +41,18 @@ def require_admin(credentials: HTTPBasicCredentials | None = Security(_basic_aut
             detail="Admin authentication required.",
             headers={"WWW-Authenticate": "Basic"},
         )
+    # Checked before touching the DB/password so a locked-out username can't
+    # keep burning verify_password attempts. The message differs from
+    # "invalid credentials" below, but that alone doesn't leak whether the
+    # username exists: record_failed_login() runs identically for real and
+    # nonexistent usernames on the failure path, so lockout state never
+    # correlates with account existence.
+    if is_locked_out(credentials.username):
+        raise HTTPException(
+            status_code=401,
+            detail="Too many failed login attempts. Try again later.",
+            headers={"WWW-Authenticate": "Basic"},
+        )
     with Session(app_engine()) as session:
         admin = (
             session.query(AdminUser)
@@ -46,11 +64,13 @@ def require_admin(credentials: HTTPBasicCredentials | None = Security(_basic_aut
     candidate_hash = admin.hashed_password if admin else _dummy_hash()
     password_ok = verify_password(credentials.password, candidate_hash)
     if not admin or not password_ok:
+        record_failed_login(credentials.username)
         raise HTTPException(
             status_code=401,
             detail="Invalid credentials.",
             headers={"WWW-Authenticate": "Basic"},
         )
+    clear_failed_logins(credentials.username)
     return admin
 
 
