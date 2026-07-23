@@ -22,17 +22,20 @@ import hashlib
 import hmac
 import ssl
 import time
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 
 import certifi
 import structlog
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
+from sqlalchemy.exc import IntegrityError
 
 from core.agent import query as agent_query
 from core.config import settings
 from core.db import db_session
 from core.rbac.context import RBACContext
+from core.rbac.models import SlackSeenEvent
 from core.rbac.repository import HRUserRepository
 
 logger = structlog.get_logger(__name__)
@@ -44,27 +47,32 @@ logger = structlog.get_logger(__name__)
 # Slack redelivers an event (same event_id, X-Slack-Retry-Num header) if we
 # don't ack within 3s — and an identical signed body replays within the 5-minute
 # signature window. Without dedupe each redelivery re-runs the agent and
-# re-posts. An in-process TTL set is enough for the common single-worker deploy;
-# a multi-worker deploy would need a shared store (Redis / a DB table).
+# re-posts. Backed by the slack_seen_events table (core/rbac/models.py) rather
+# than an in-process dict, so dedupe works across worker processes, not just
+# within one. The event_id primary key gives atomic "first sight wins"
+# semantics under concurrent inserts — a duplicate insert raises
+# IntegrityError, which is exactly the signal a redelivery should produce.
 _SEEN_EVENT_TTL_SECONDS = 600
-_seen_events: dict[str, float] = {}
 
 
 def already_processed(event_id: str | None) -> bool:
-    """True if this Slack event_id was seen within the TTL. First sight records
-    it and returns False. Empty/missing id is never treated as a duplicate."""
+    """True if this Slack event_id was seen within the TTL. First sight
+    records it and returns False. Empty/missing id is never treated as a
+    duplicate."""
     if not event_id:
         return False
-    now = time.monotonic()
-    # Evict expired entries so the dict can't grow without bound.
-    if _seen_events:
-        expired = [k for k, t in _seen_events.items() if now - t > _SEEN_EVENT_TTL_SECONDS]
-        for k in expired:
-            del _seen_events[k]
-    if event_id in _seen_events:
-        return True
-    _seen_events[event_id] = now
-    return False
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(seconds=_SEEN_EVENT_TTL_SECONDS)
+    with db_session() as session:
+        # Opportunistic cleanup so the table can't grow without bound.
+        session.query(SlackSeenEvent).filter(SlackSeenEvent.seen_at < cutoff).delete()
+        try:
+            session.add(SlackSeenEvent(event_id=event_id, seen_at=now))
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            return True
+        return False
 
 
 # ---------------------------------------------------------------------------

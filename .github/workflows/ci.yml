@@ -30,3 +30,42 @@ jobs:
         # core/config.py raise at import time for a missing SECRET_KEY. This
         # mirrors how the suite runs locally.
         run: DEBUG=true uv run pytest --no-cov -q
+
+  scope-tests-postgres:
+    # Runs tests/test_scope_execution.py (the RBAC row-scoping suite) against
+    # real Postgres instead of transpiled SQLite — closes the "Dialect gap"
+    # testing finding: Postgres-only parse/emit edge cases (lateral joins,
+    # DISTINCT ON, window functions, strict boolean typing — see the
+    # is_active boolean-vs-integer bug this lane originally caught) are
+    # never exercised by the default SQLite-transpiled run.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: hr_test
+          POSTGRES_PASSWORD: hr_test
+          POSTGRES_DB: hr_assistant_scope_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install dependencies (incl. dev group)
+        run: uv sync
+
+      - name: Scope execution tests (real Postgres)
+        env:
+          DEBUG: "true"
+          TEST_DATABASE_URL: postgresql://hr_test:hr_test@localhost:5432/hr_assistant_scope_test
+        run: uv run pytest tests/test_scope_execution.py --no-cov -q

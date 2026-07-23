@@ -2,18 +2,19 @@ import json
 import re
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from adapters.slack import already_processed, process_event, verify_signature
 from core.config import settings
+from core.executor import agent_executor
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
 
 
 @router.post("/webhook/slack")
-async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
+async def slack_webhook(request: Request):
     """
     Receive Slack Events API payloads.
 
@@ -21,7 +22,9 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
     1. Verify X-Slack-Signature for ALL requests — reject unsigned with 403.
     2. Handle url_verification challenge (Slack signs these too).
     3. Ack with 200 immediately — Slack requires a response within 3 seconds.
-    4. Dispatch the actual query to a background task.
+    4. Dispatch the actual query to core.executor.agent_executor — the same
+       bounded pool /query's SSE path uses, decoupled from Starlette's own
+       default threadpool that regular request handling shares.
 
     Supported event types: app_mention, message.im
     """
@@ -78,7 +81,7 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
                 text = re.sub(r"^<@[A-Z0-9]+>\s*", "", text).strip()
 
             if slack_user_id and text:
-                background_tasks.add_task(
+                agent_executor.submit(
                     process_event,
                     slack_user_id=slack_user_id,
                     text=text,

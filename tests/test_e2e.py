@@ -13,6 +13,7 @@ request time, which reads settings.APP_DATABASE_URL).
 """
 
 import base64
+import json
 from unittest.mock import patch
 
 import pytest
@@ -28,6 +29,35 @@ _ADMIN_HEADERS = {
     "Authorization": "Basic "
     + base64.b64encode(f"{_ADMIN_CREDS[0]}:{_ADMIN_CREDS[1]}".encode()).decode()
 }
+
+
+def _sse_events(response) -> list[tuple[str, dict]]:
+    """Parse a text/event-stream /query response body into
+    [(event_name, json_data), ...], skipping heartbeat comment lines."""
+    events: list[tuple[str, dict]] = []
+    for block in response.text.split("\n\n"):
+        if not block.strip():
+            continue
+        event_name = None
+        data_line = None
+        for line in block.splitlines():
+            if line.startswith("event:"):
+                event_name = line[len("event:") :].strip()
+            elif line.startswith("data:"):
+                data_line = line[len("data:") :].strip()
+        if event_name and data_line is not None:
+            events.append((event_name, json.loads(data_line)))
+    return events
+
+
+def _sse_result(response) -> dict:
+    """The `answer` or `error` event's data dict from an SSE /query
+    response — the one event carrying the actual outcome, after any
+    `status`/heartbeat events."""
+    for name, data in _sse_events(response):
+        if name in ("answer", "error"):
+            return data
+    raise AssertionError(f"No answer/error event in SSE body: {response.text!r}")
 
 
 @pytest.fixture(scope="module")
@@ -177,7 +207,7 @@ class TestQueryUnauthenticated:
     def test_valid_query_returns_answer(self, client):
         r = client.post("/query", json={"query": "How many employees do we have?"})
         assert r.status_code == 200
-        assert r.json()["answer"] == MOCK_ANSWER
+        assert _sse_result(r)["answer"] == MOCK_ANSWER
 
     @pytest.mark.parametrize(
         "query_text",
@@ -208,7 +238,33 @@ class TestQueryUnauthenticated:
         """All 20 canonical queries from SPEC.md must return 200 with an answer."""
         r = client.post("/query", json={"query": query_text})
         assert r.status_code == 200
-        assert len(r.json()["answer"]) > 0
+        assert len(_sse_result(r)["answer"]) > 0
+
+    def test_agent_failure_yields_sse_error_event_not_500(self, client):
+        """By the time the agent call fails, the SSE stream has already sent
+        a 200 with headers (the `status` event) — a failure can only be
+        reported as an `error` event, not an HTTP 500.
+
+        Patches api.services.query_service.agent_query (not core.agent.query)
+        — the `client` fixture's mock_query patch is applied once, at module
+        import time, so query_service's `from core.agent import query as
+        agent_query` already captured that reference; re-patching
+        core.agent.query afterwards wouldn't reach this already-bound name.
+        """
+        with patch("api.services.query_service.agent_query", side_effect=RuntimeError("boom")):
+            r = client.post("/query", json={"query": "How many employees?"})
+
+        assert r.status_code == 200
+        events = _sse_events(r)
+        names = [name for name, _ in events]
+        assert "status" in names
+        assert "error" in names
+        assert "answer" not in names
+
+    def test_status_event_sent_before_answer(self, client):
+        r = client.post("/query", json={"query": "How many employees?"})
+        names = [name for name, _ in _sse_events(r)]
+        assert names.index("status") < names.index("answer")
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +292,7 @@ class TestQueryAuthenticated:
             },
         )
         assert r.status_code == 200
-        assert r.json()["answer"] == MOCK_ANSWER
+        assert _sse_result(r)["answer"] == MOCK_ANSWER
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +353,7 @@ class TestQueryIdentityForgery:
             headers=_ADMIN_HEADERS,
         )
         assert r.status_code == 200
-        assert r.json()["answer"] == MOCK_ANSWER
+        assert _sse_result(r)["answer"] == MOCK_ANSWER
 
     def test_admin_no_slack_id_allowed(self, client, prod_mode):
         # Authenticated admin may run without a slack_user_id — no RBAC scope
@@ -310,7 +366,7 @@ class TestQueryIdentityForgery:
             headers=_ADMIN_HEADERS,
         )
         assert r.status_code == 200
-        assert r.json()["answer"] == MOCK_ANSWER
+        assert _sse_result(r)["answer"] == MOCK_ANSWER
 
     def test_dev_mode_still_open(self, client, registered_user):
         # With ALLOW_UNAUTHENTICATED_QUERY=true (module default here), no auth needed.
