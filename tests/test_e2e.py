@@ -359,6 +359,32 @@ class TestAdminAuth:
 
 
 # ---------------------------------------------------------------------------
+# Security headers + CORS
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityHeaders:
+    def test_security_headers_present_on_response(self, client):
+        r = client.get("/health")
+        assert r.headers["x-content-type-options"] == "nosniff"
+        assert r.headers["x-frame-options"] == "DENY"
+        assert r.headers["referrer-policy"] == "no-referrer"
+        assert "max-age=63072000" in r.headers["strict-transport-security"]
+
+    def test_cors_methods_are_narrowed(self, client):
+        r = client.options(
+            "/query",
+            headers={
+                "Origin": "http://localhost",
+                "Access-Control-Request-Method": "PUT",
+            },
+        )
+        allowed = r.headers.get("access-control-allow-methods", "")
+        assert "PUT" not in allowed
+        assert "POST" in allowed
+
+
+# ---------------------------------------------------------------------------
 # User admin endpoints
 # ---------------------------------------------------------------------------
 

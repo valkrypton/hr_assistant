@@ -281,27 +281,12 @@ class TestAgentPrefixRendering:
         ],
     )
     def test_prefix_renders_for_all_roles(self, role, dept, team):
-        from core.agent import _BASE_PREFIX, _RESTRICTED_RBAC, _UNRESTRICTED_RBAC
+        from core.agent_prompts import build_prefix
 
         ctx = make_ctx(role, dept_id=dept, team_id=team)
 
-        if ctx.is_unrestricted:
-            rbac_prefix = _UNRESTRICTED_RBAC
-        else:
-            scope_lines = ctx.scope_prompt().splitlines()
-            scope_description = "\n".join(ln for ln in scope_lines if ln.startswith("DATA SCOPE"))
-            rbac_prefix = _RESTRICTED_RBAC.format(
-                role=ctx.role.value.upper().replace("_", " "),
-                scope_description=scope_description,
-            )
+        prefix = build_prefix(ctx, hr_records_note="")
 
-        from core.agent import _forbidden_columns_str
-
-        prefix = _BASE_PREFIX.format(
-            forbidden_columns=_forbidden_columns_str(),
-            rbac_prefix=rbac_prefix,
-            hr_records_note="",
-        )
         assert len(prefix) > 100
         assert "PRIVACY" in prefix
         assert "salary" in prefix  # at least one forbidden column rendered

@@ -18,7 +18,7 @@ def get_llm() -> BaseChatModel:
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
-            api_key=settings.OPENAI_API_KEY,
+            api_key=settings.OPENAI_API_KEY.get_secret_value(),
             model=settings.OPENAI_MODEL,
         )
 
@@ -26,7 +26,7 @@ def get_llm() -> BaseChatModel:
         from langchain_anthropic import ChatAnthropic
 
         return ChatAnthropic(
-            api_key=settings.ANTHROPIC_API_KEY,
+            api_key=settings.ANTHROPIC_API_KEY.get_secret_value(),
             model_name=settings.ANTHROPIC_MODEL,
         )
 
@@ -35,7 +35,7 @@ def get_llm() -> BaseChatModel:
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
-            api_key=settings.XAI_API_KEY,
+            api_key=settings.XAI_API_KEY.get_secret_value(),
             model=settings.XAI_MODEL,
             base_url=settings.XAI_BASE_URL,
         )
@@ -45,7 +45,7 @@ def get_llm() -> BaseChatModel:
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
-            api_key=settings.QWEN_API_KEY,
+            api_key=settings.QWEN_API_KEY.get_secret_value(),
             model=settings.QWEN_MODEL,
             base_url=settings.QWEN_BASE_URL,
         )
@@ -53,7 +53,7 @@ def get_llm() -> BaseChatModel:
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
-            api_key=settings.LIBRECHAT_API_KEY,
+            api_key=settings.LIBRECHAT_API_KEY.get_secret_value(),
             model=settings.LIBRECHAT_MODEL,
             base_url=settings.LIBRECHAT_BASE_URL,
         )

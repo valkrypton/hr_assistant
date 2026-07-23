@@ -6,18 +6,28 @@ multiple routes.
 """
 
 from collections.abc import Iterator
-from contextlib import contextmanager
 from functools import lru_cache
 from typing import Annotated
 
-import sqlalchemy
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 
-from core.auth import hash_password, verify_password
-from core.config import DEFAULT_ENGINE_ARGS, settings
+from core.auth import (
+    hash_password,
+    verify_password,
+)
+from core.config import settings
+from core.db import app_engine, db_session, erp_engine
 from core.rbac.models import AdminUser
+
+# app_engine/erp_engine/db_session now live in core/db.py (adapters/slack.py
+# needs them too, and adapters/ can't import from api/) — re-exported here
+# so existing `from api.deps import app_engine` call sites (api/main.py,
+# tests/test_e2e.py) and get_db() below keep working unchanged. __all__
+# marks the pass-through names as intentionally re-exported, not dead
+# imports.
+__all__ = ["app_engine", "db_session", "erp_engine"]
 
 _basic_auth = HTTPBasic(auto_error=False)
 
@@ -67,26 +77,6 @@ def require_admin_unless_open(
     if settings.ALLOW_UNAUTHENTICATED_QUERY:
         return None
     return require_admin(credentials)
-
-
-@lru_cache(maxsize=1)
-def app_engine():
-    """Writable engine for our own tables (hr_assistant_users, hr_admin_users)."""
-    return sqlalchemy.create_engine(settings.APP_DATABASE_URL, **DEFAULT_ENGINE_ARGS)
-
-
-@lru_cache(maxsize=1)
-def erp_engine():
-    """Read-only ERP engine — used only for the health check."""
-    return sqlalchemy.create_engine(settings.DATABASE_URL, **DEFAULT_ENGINE_ARGS)
-
-
-@contextmanager
-def db_session() -> Iterator[Session]:
-    """Open a Session on the app engine. Usable outside a request (e.g. the
-    Slack background task), unlike get_db() below which is FastAPI-only."""
-    with Session(app_engine()) as session:
-        yield session
 
 
 def get_db() -> Iterator[Session]:

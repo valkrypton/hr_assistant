@@ -38,7 +38,7 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
     signature = request.headers.get("X-Slack-Signature", "")
 
     if not verify_signature(
-        signing_secret=settings.SLACK_SIGNING_SECRET,
+        signing_secret=settings.SLACK_SIGNING_SECRET.get_secret_value(),
         request_timestamp=timestamp,
         request_body=raw_body,
         slack_signature=signature,

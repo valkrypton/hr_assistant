@@ -10,7 +10,7 @@ from api.deps import db_session
 from api.schemas.query import QueryRequest, QueryResponse
 from core.agent import query as agent_query
 from core.rbac.context import RBACContext
-from core.rbac.models import HRUser
+from core.rbac.repository import HRUserRepository
 
 
 def run_query(body: QueryRequest) -> QueryResponse:
@@ -26,11 +26,7 @@ def run_query(body: QueryRequest) -> QueryResponse:
     # that actually need it.
     if body.slack_user_id:
         with db_session() as session:
-            hr_user = (
-                session.query(HRUser)
-                .filter_by(slack_user_id=body.slack_user_id, is_active=True)
-                .first()
-            )
+            hr_user = HRUserRepository.get_by_slack_user_id(session, body.slack_user_id)
 
         if not hr_user:
             raise HTTPException(
