@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from sqladmin import Admin
 from sqladmin.authentication import AuthenticationBackend
+from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
@@ -43,8 +44,6 @@ class AdminAuth(AuthenticationBackend):
         password = form.get("password", "")
 
         def _lookup():
-            from sqlalchemy.orm import Session
-
             with Session(app_engine()) as session:
                 return session.query(AdminUser).filter_by(username=username, is_active=True).first()
 
@@ -94,7 +93,7 @@ app = FastAPI(
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.TRUSTED_PROXY_HOSTS)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ALLOW_ORIGINS,
+    allow_origins=settings.cors_allow_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

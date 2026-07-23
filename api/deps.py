@@ -16,7 +16,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 
 from core.auth import hash_password, verify_password
-from core.config import settings
+from core.config import DEFAULT_ENGINE_ARGS, settings
 from core.rbac.models import AdminUser
 
 _basic_auth = HTTPBasic(auto_error=False)
@@ -72,13 +72,13 @@ def require_admin_unless_open(
 @lru_cache(maxsize=1)
 def app_engine():
     """Writable engine for our own tables (hr_assistant_users, hr_admin_users)."""
-    return sqlalchemy.create_engine(settings.APP_DATABASE_URL)
+    return sqlalchemy.create_engine(settings.APP_DATABASE_URL, **DEFAULT_ENGINE_ARGS)
 
 
 @lru_cache(maxsize=1)
 def erp_engine():
     """Read-only ERP engine — used only for the health check."""
-    return sqlalchemy.create_engine(settings.DATABASE_URL)
+    return sqlalchemy.create_engine(settings.DATABASE_URL, **DEFAULT_ENGINE_ARGS)
 
 
 @contextmanager
@@ -97,3 +97,4 @@ def get_db() -> Iterator[Session]:
 
 
 DbDep = Annotated[Session, Depends(get_db)]
+OptionalAdminDep = Annotated[AdminUser | None, Depends(require_admin_unless_open)]

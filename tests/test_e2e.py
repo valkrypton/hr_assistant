@@ -143,6 +143,28 @@ class TestHealth:
 
 
 # ---------------------------------------------------------------------------
+# Engine pool tuning — pool_pre_ping guards against a proxy-idled connection
+# surfacing as a user-visible 500 instead of transparently reconnecting.
+# ---------------------------------------------------------------------------
+
+
+class TestEnginePoolTuning:
+    def test_app_engine_has_pool_pre_ping_and_recycle(self, client):
+        from api.deps import app_engine
+
+        engine = app_engine()
+        assert engine.pool._pre_ping is True
+        assert engine.pool._recycle == 300
+
+    def test_erp_engine_has_pool_pre_ping_and_recycle(self, client):
+        from api.deps import erp_engine
+
+        engine = erp_engine()
+        assert engine.pool._pre_ping is True
+        assert engine.pool._recycle == 300
+
+
+# ---------------------------------------------------------------------------
 # /query — unauthenticated
 # ---------------------------------------------------------------------------
 

@@ -1,4 +1,5 @@
 import json
+import re
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -24,8 +25,6 @@ async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
 
     Supported event types: app_mention, message.im
     """
-    import re
-
     raw_body = await request.body()
 
     # Step 1: Parse payload (needed for url_verification challenge extraction).
