@@ -19,7 +19,7 @@ from langchain_community.agent_toolkits import create_sql_agent
 from langchain_community.callbacks import get_openai_callback
 from langchain_community.utilities import SQLDatabase
 
-from core.config import settings
+from core.config import DEFAULT_ENGINE_ARGS, settings
 from core.providers.factory import get_llm
 from core.rbac.context import FORBIDDEN_COLUMNS
 
@@ -143,12 +143,13 @@ NO hr_records TABLE: For warnings/disciplinary queries use these proxies instead
 
 
 def _get_included_tables() -> list[str]:
-    if not settings.INCLUDED_TABLES:
+    tables = settings.included_tables
+    if not tables:
         raise ValueError(
             "INCLUDED_TABLES must be set in .env. "
             "List only the tables the agent needs (e.g. person,department,leave_record)."
         )
-    return settings.included_tables
+    return tables
 
 
 # ---------------------------------------------------------------------------
@@ -171,17 +172,31 @@ def _erp_db(database_url: str, included_tables: tuple[str, ...]) -> SQLDatabase:
         database_url,
         include_tables=list(included_tables),
         sample_rows_in_table_info=0,
-        engine_args={"pool_pre_ping": True, "pool_recycle": 300},
+        engine_args={
+            **DEFAULT_ENGINE_ARGS,
+            "pool_size": settings.ERP_POOL_SIZE,
+            "max_overflow": settings.ERP_MAX_OVERFLOW,
+        },
     )
 
 
-@lru_cache(maxsize=8)
+# Cache for _hr_records_available — deliberately not @lru_cache. A transient
+# ERP error on the first probe must not pin a permanent False (and thus
+# permanently inject _HR_RECORDS_NOTE) for the process lifetime; only a
+# confirmed True is worth remembering.
+_hr_records_cache: dict[tuple[str, tuple[str, ...]], bool] = {}
+
+
 def _hr_records_available(database_url: str, included_tables: tuple[str, ...]) -> bool:
     """Whether the hr_records table exists in the ERP schema — a fixed fact
     about the database, not the requester's role, so probed once via the
     unscoped connection rather than per built agent."""
+    key = (database_url, included_tables)
+    if _hr_records_cache.get(key):
+        return True
     try:
         _erp_db(database_url, included_tables).run("SELECT 1 FROM hr_records LIMIT 1")
+        _hr_records_cache[key] = True
         return True
     except Exception:
         return False

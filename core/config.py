@@ -12,6 +12,11 @@ load_dotenv()
 
 _WEAK_SECRET_PLACEHOLDERS = {"change-me-in-production", "changeme", "secret"}
 
+# Shared SQLAlchemy engine tuning — every create_engine()/from_uri() call site
+# (ERP and app DB, across core/agent.py, api/deps.py, adapters/slack.py) uses
+# this so pool tuning can't drift out of sync between them.
+DEFAULT_ENGINE_ARGS: dict = {"pool_pre_ping": True, "pool_recycle": 300}
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -69,6 +74,14 @@ class Settings(BaseSettings):
     # string — parsed into a list by the included_tables property below.
     # All other tables in the database are invisible to the agent.
     INCLUDED_TABLES: str = ""
+
+    # Pool sizing for the shared ERP engine (core/agent.py _erp_db). That
+    # engine is now a single process-wide cached instance instead of one
+    # built fresh per restricted-role request, so this caps total concurrent
+    # ERP SQL across every in-flight request — raise via env if bursts start
+    # queuing/500ing.
+    ERP_POOL_SIZE: int = 5
+    ERP_MAX_OVERFLOW: int = 10
 
     # Slack integration (Phase 3)
     SLACK_BOT_TOKEN: str = ""

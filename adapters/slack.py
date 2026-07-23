@@ -33,7 +33,7 @@ from slack_sdk.errors import SlackApiError
 from sqlalchemy.orm import Session
 
 from core.agent import query as agent_query
-from core.config import settings
+from core.config import DEFAULT_ENGINE_ARGS, settings
 from core.rbac.context import RBACContext
 from core.rbac.models import HRUser
 
@@ -157,9 +157,7 @@ def _format_blocks(answer: str) -> list[dict]:
 def _get_app_engine():
     global _app_engine
     if _app_engine is None:
-        _app_engine = sqlalchemy.create_engine(
-            settings.APP_DATABASE_URL, pool_pre_ping=True, pool_recycle=300
-        )
+        _app_engine = sqlalchemy.create_engine(settings.APP_DATABASE_URL, **DEFAULT_ENGINE_ARGS)
     return _app_engine
 
 
@@ -194,12 +192,21 @@ def _slack_client() -> WebClient:
     return WebClient(token=settings.SLACK_BOT_TOKEN, ssl=ssl_ctx)
 
 
-@lru_cache(maxsize=1)
+_bot_user_id_cache: str | None = None
+
+
 def _bot_user_id() -> str | None:
     """The bot's own Slack user ID — fixed for the process lifetime, so
-    fetched via auth_test() once instead of on every event."""
+    fetched via auth_test() once instead of on every event. Not @lru_cache:
+    a transient auth_test() failure on the first call must not pin None for
+    the process lifetime (which would mislabel the bot's own thread messages
+    as user turns until restart) — only a successful lookup is cached."""
+    global _bot_user_id_cache
+    if _bot_user_id_cache is not None:
+        return _bot_user_id_cache
     try:
-        return _slack_client().auth_test()["user_id"]
+        _bot_user_id_cache = _slack_client().auth_test()["user_id"]
+        return _bot_user_id_cache
     except Exception:
         return None
 
