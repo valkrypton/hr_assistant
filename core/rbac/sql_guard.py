@@ -100,6 +100,7 @@ _PERSON_FK_TABLES = frozenset(
         "core_personemploymenthistory",
         "core_personemploymenttypehistory",
         "person_leave_limit",
+        "job_requisition",
     }
 )
 
@@ -130,7 +131,6 @@ _PERSON_FREE_TABLES = frozenset(
         "competency",
         "competency_level",
         "skill_category",
-        "job_requisition",
         # No FK to person or any person-linked table — confirmed with the
         # team while closing the "mis-listed table" gap (2026-07-21).
         "available_time",

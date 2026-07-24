@@ -7,6 +7,7 @@ The agent never sees these tables — they are not in INCLUDED_TABLES.
 Tables
 ------
 hr_assistant_users   — registered users with roles and Slack identity
+slack_seen_events    — Slack event_id dedupe store (shared across workers)
 """
 
 from datetime import UTC, datetime
@@ -87,3 +88,28 @@ class HRUser(Base):
             f"<HRUser id={self.id} employee_id={self.employee_id} "
             f"role={self.role} slack={self.slack_user_id}>"
         )
+
+
+class SlackSeenEvent(Base):
+    """
+    Dedupe store for Slack event_ids — replaces the previous in-process TTL
+    dict (adapters/slack.py), which only worked for a single-worker deploy.
+    The event_id primary key gives atomic "first sight wins" semantics under
+    concurrent inserts (a duplicate insert raises IntegrityError) across
+    workers/processes sharing this DB. Rows older than the TTL are
+    opportunistically deleted on each check — see
+    adapters.slack.already_processed.
+    """
+
+    __tablename__ = "slack_seen_events"
+
+    event_id = Column(String(128), primary_key=True)
+    seen_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        index=True,
+    )
+
+    def __repr__(self) -> str:
+        return f"<SlackSeenEvent event_id={self.event_id} seen_at={self.seen_at}>"

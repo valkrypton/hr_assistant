@@ -92,6 +92,13 @@ class Settings(BaseSettings):
     ERP_POOL_SIZE: int = 5
     ERP_MAX_OVERFLOW: int = 10
 
+    # Max concurrent agent (LLM) executions, shared by /query and the Slack
+    # webhook path — see core/executor.py. A capacity bound, not a per-user
+    # throttle: callers queue rather than get rejected. Decouples agent
+    # execution from Starlette's own default threadpool, which every other
+    # sync route (and, before this, Slack's BackgroundTasks) shares.
+    AGENT_EXECUTION_CONCURRENCY: int = 8
+
     # Slack integration (Phase 3)
     SLACK_BOT_TOKEN: SecretStr = SecretStr("")
     SLACK_SIGNING_SECRET: SecretStr = SecretStr("")

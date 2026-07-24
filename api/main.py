@@ -26,6 +26,7 @@ from api.routes import health, query, slack, users
 from core.agent import get_agent
 from core.auth import verify_password
 from core.config import settings
+from core.executor import agent_executor
 from core.logging import configure_logging
 from core.rbac.models import AdminUser, Base
 
@@ -77,6 +78,7 @@ async def lifespan(app: FastAPI):
         Base.metadata.create_all(app_engine())
     get_agent()  # warm up the shared unrestricted agent on startup
     yield
+    agent_executor.shutdown(wait=True)
 
 
 # ---------------------------------------------------------------------------

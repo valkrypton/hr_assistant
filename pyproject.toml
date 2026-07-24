@@ -4,13 +4,21 @@ version = "0.1.0"
 description = "Natural-language HR workforce assistant backed by an ERP PostgreSQL database, with RBAC and Slack integration."
 requires-python = ">=3.13"
 dependencies = [
-    # Core AI / LangChain
-    "langchain>=0.3",
-    "langchain-core>=0.3",
-    "langchain-community>=0.3",
-    "langchain-ollama>=0.2",       # Ollama provider
-    "langchain-openai>=0.2",       # OpenAI, xAI (Grok), QWEN (OpenAI-compatible)
-    "langchain-anthropic>=0.3",    # Anthropic / Claude
+    # Core AI / LangChain — pinned to exact versions rather than floors.
+    # langchain-community is deprecated ("being sunset and is no longer
+    # actively maintained" — emits a DeprecationWarning on import) and the
+    # whole SQL agent (create_sql_agent, SQLDatabase, get_openai_callback)
+    # rests on it with no clean standalone replacement today. A full
+    # migration is out of scope until the typed-tools direction in
+    # docs/rbac-hardening-roadmap.md is decided; until then, an exact pin is
+    # the cheap mitigation — an unpinned floor could silently pull in a
+    # release that removes something this app depends on.
+    "langchain==1.3.11",
+    "langchain-core==1.4.8",
+    "langchain-community==0.4.2",
+    "langchain-ollama==1.1.0",     # Ollama provider
+    "langchain-openai==1.3.3",     # OpenAI, xAI (Grok), QWEN (OpenAI-compatible)
+    "langchain-anthropic==1.4.8",  # Anthropic / Claude
 
     # Database
     "sqlalchemy>=2.0",

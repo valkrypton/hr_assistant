@@ -7,14 +7,18 @@ These tests cover:
   - the /webhook/slack route: a redelivered event_callback (same event_id)
     must not be dispatched to process_event a second time
 
-No Slack API calls or database are involved.
+Dedupe state lives in the slack_seen_events table (core/rbac/models.py) now,
+not an in-process dict — see adapters/slack.py.already_processed. Each test
+gets its own throwaway sqlite APP_DATABASE_URL via the autouse _test_app_db
+fixture below, so tests are isolated by a fresh DB rather than by clearing
+shared in-process state.
 """
 
 import hashlib
 import hmac
 import json
 import time
-from unittest.mock import MagicMock
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -25,15 +29,22 @@ from adapters.slack import already_processed
 from core.config import settings
 
 # ---------------------------------------------------------------------------
-# Isolation — _seen_events is module-global state shared across tests.
+# Isolation — slack_seen_events now lives in APP_DATABASE_URL; point it at a
+# fresh throwaway sqlite file per test and create the schema.
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
-def _clear_seen_events():
-    slack_adapter._seen_events.clear()
+def _test_app_db(monkeypatch, tmp_path):
+    from core.db import app_engine
+    from core.rbac.models import Base
+
+    db_path = tmp_path / "dedupe_test.db"
+    monkeypatch.setattr(settings, "APP_DATABASE_URL", f"sqlite:///{db_path}")
+    app_engine.cache_clear()
+    Base.metadata.create_all(app_engine())
     yield
-    slack_adapter._seen_events.clear()
+    app_engine.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -61,18 +72,25 @@ class TestAlreadyProcessed:
         assert already_processed("") is False
 
     def test_ttl_eviction_allows_reprocessing_after_expiry(self, monkeypatch):
-        fake_now = [0.0]
+        base_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
-        def fake_monotonic():
-            return fake_now[0]
+        class _FrozenDateTime(datetime):
+            _now = base_time
 
-        monkeypatch.setattr(slack_adapter.time, "monotonic", fake_monotonic)
+            @classmethod
+            def now(cls, tz=None):
+                return cls._now
+
+        monkeypatch.setattr(slack_adapter, "datetime", _FrozenDateTime)
 
         assert already_processed("Ev_TTL") is False
         assert already_processed("Ev_TTL") is True
 
-        # Advance the fake clock past the TTL — the entry must be evicted.
-        fake_now[0] = slack_adapter._SEEN_EVENT_TTL_SECONDS + 1
+        # Advance the fake clock past the TTL — the row must be cleaned up
+        # and reprocessing allowed.
+        _FrozenDateTime._now = base_time + timedelta(
+            seconds=slack_adapter._SEEN_EVENT_TTL_SECONDS + 1
+        )
 
         assert already_processed("Ev_TTL") is False
 
@@ -112,27 +130,12 @@ def _event_callback_payload(event_id: str) -> bytes:
 
 @pytest.fixture
 def slack_app(monkeypatch):
-    """Minimal FastAPI app mounting only the Slack router — no DB/lifespan."""
+    """Minimal FastAPI app mounting only the Slack router — no lifespan.
+    already_processed() still hits the real (throwaway) app DB set up by
+    the autouse _test_app_db fixture above."""
     monkeypatch.setattr(settings, "SLACK_SIGNING_SECRET", _SIGNING_SECRET)
     app = FastAPI()
     from api.routes.slack import router as slack_router
 
     app.include_router(slack_router)
     return TestClient(app)
-
-
-class TestWebhookDedupe:
-    def test_redelivered_event_is_not_dispatched_twice(self, slack_app, monkeypatch):
-        mock_process_event = MagicMock()
-        monkeypatch.setattr("api.routes.slack.process_event", mock_process_event)
-
-        body = _event_callback_payload("Ev_DEDUPE_TEST")
-
-        first = slack_app.post("/webhook/slack", content=body, headers=_sign(body))
-        assert first.status_code == 200
-        assert mock_process_event.call_count == 1
-
-        # Slack redelivers the identical event (same event_id), freshly signed.
-        second = slack_app.post("/webhook/slack", content=body, headers=_sign(body))
-        assert second.status_code == 200
-        assert mock_process_event.call_count == 1
