@@ -11,6 +11,7 @@ DATABASE_URL.
 """
 
 import pytest
+from pydantic import SecretStr
 
 from core.config import Settings
 
@@ -120,3 +121,48 @@ class TestDevFallbacks:
         assert settings.DATABASE_URL == "postgres://erp"
         assert settings.APP_DATABASE_URL != settings.DATABASE_URL
         assert settings.APP_DATABASE_URL == "sqlite:///./data/app.db"
+
+
+class TestSecretFields:
+    """SECRET_KEY and the provider API keys are SecretStr — verifies they
+    round-trip correctly through construction and the dev-fallback path, and
+    that validate_assignment doesn't let a plain-str assignment silently
+    defeat the SecretStr annotation (the same class of bug the
+    cors_allow_origins/included_tables properties guard against)."""
+
+    def test_secret_fields_are_secretstr_and_dont_leak_via_repr(self, monkeypatch):
+        _clear_guarded_env(monkeypatch)
+        monkeypatch.setenv("DEBUG", "true")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-super-secret-value")
+
+        settings = Settings(_env_file=None)
+
+        assert isinstance(settings.OPENAI_API_KEY, SecretStr)
+        assert isinstance(settings.SECRET_KEY, SecretStr)
+        assert settings.OPENAI_API_KEY.get_secret_value() == "sk-super-secret-value"
+        assert "sk-super-secret-value" not in repr(settings.OPENAI_API_KEY)
+        assert "sk-super-secret-value" not in str(settings.OPENAI_API_KEY)
+
+    def test_secret_key_dev_fallback_is_coerced_to_secretstr(self, monkeypatch):
+        _clear_guarded_env(monkeypatch)
+        monkeypatch.setenv("DEBUG", "true")
+
+        settings = Settings(_env_file=None)
+
+        # The fallback assigns a plain str (secrets.token_hex(32)) — with
+        # validate_assignment=True it must come out the other side as a
+        # SecretStr, not a bare string that would break every
+        # .get_secret_value() call site.
+        assert isinstance(settings.SECRET_KEY, SecretStr)
+        assert len(settings.SECRET_KEY.get_secret_value()) == 64
+
+    def test_empty_secret_key_is_falsy_for_the_fallback_check(self, monkeypatch):
+        _clear_guarded_env(monkeypatch)
+        monkeypatch.setenv("DEBUG", "true")
+        monkeypatch.delenv("SECRET_KEY", raising=False)
+
+        settings = Settings(_env_file=None)
+
+        # Guards against SecretStr("") accidentally being truthy, which would
+        # skip the token_hex(32) fallback and leave SECRET_KEY empty.
+        assert settings.SECRET_KEY.get_secret_value() != ""

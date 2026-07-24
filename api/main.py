@@ -94,9 +94,31 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.TRUSTED_PROXY_
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allow_origins,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # Only the methods/headers the API actually uses — the admin panel is
+    # browsed same-origin and isn't affected by CORS at all.
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    # Harmless over plain HTTP (browsers ignore it); real value once behind
+    # TLS termination in production.
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+}
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        for header, value in _SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 _ADMIN_CSS = b"""<style>
   .table-responsive { overflow-x: hidden !important; }
@@ -136,7 +158,13 @@ app.add_middleware(AdminCSSMiddleware)
 # ---------------------------------------------------------------------------
 
 admin = Admin(
-    app, engine=app_engine(), authentication_backend=AdminAuth(secret_key=settings.SECRET_KEY)
+    app,
+    engine=app_engine(),
+    authentication_backend=AdminAuth(
+        secret_key=settings.SECRET_KEY.get_secret_value(),
+        https_only=not settings.DEBUG,
+        same_site="lax",
+    ),
 )
 admin.add_view(HRUserAdmin)
 

@@ -2,7 +2,7 @@ import os
 import secrets
 
 from dotenv import load_dotenv
-from pydantic import field_validator, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # pydantic-settings' env_file loading only feeds its own internal source, not
@@ -19,7 +19,16 @@ DEFAULT_ENGINE_ARGS: dict = {"pool_pre_ping": True, "pool_recycle": 300}
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # validate_assignment: pydantic doesn't validate in-place attribute
+    # mutation by default. Without this, assigning a plain str to a SecretStr
+    # field (e.g. the SECRET_KEY dev-fallback below) would silently store a
+    # bare string where every call site expects .get_secret_value() to exist —
+    # the same class of bug that motivated the cors_allow_origins/
+    # included_tables properties above. With it on, such assignments are
+    # coerced through the field's validator like construction-time input is.
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", validate_assignment=True
+    )
 
     # AI Provider: ollama | openai | anthropic | xai | qwen | librechat
     AI_PROVIDER: str = "ollama"
@@ -29,24 +38,24 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "llama3.2"
 
     # OpenAI
-    OPENAI_API_KEY: str = ""
+    OPENAI_API_KEY: SecretStr = SecretStr("")
     OPENAI_MODEL: str = "gpt-4o"
 
     # Anthropic
-    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_API_KEY: SecretStr = SecretStr("")
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
 
     # xAI (Grok) — uses OpenAI-compatible API
-    XAI_API_KEY: str = ""
+    XAI_API_KEY: SecretStr = SecretStr("")
     XAI_MODEL: str = "grok-beta"
     XAI_BASE_URL: str = "https://api.x.ai/v1"
 
     # QWEN (Alibaba) — uses OpenAI-compatible API
-    QWEN_API_KEY: str = ""
+    QWEN_API_KEY: SecretStr = SecretStr("")
     QWEN_MODEL: str = "qwen-max"
     QWEN_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-    LIBRECHAT_API_KEY: str = ""
+    LIBRECHAT_API_KEY: SecretStr = SecretStr("")
     LIBRECHAT_MODEL: str = "xai/grok-4-0709"
     LIBRECHAT_BASE_URL: str = "https://litellm.arbisoft.com"
 
@@ -84,14 +93,14 @@ class Settings(BaseSettings):
     ERP_MAX_OVERFLOW: int = 10
 
     # Slack integration (Phase 3)
-    SLACK_BOT_TOKEN: str = ""
-    SLACK_SIGNING_SECRET: str = ""
+    SLACK_BOT_TOKEN: SecretStr = SecretStr("")
+    SLACK_SIGNING_SECRET: SecretStr = SecretStr("")
 
     # Secret key for signing admin session cookies (SQLAdmin panel).
     # Set SECRET_KEY in the environment for production; openssl rand -hex 32
     # When unset, a random key is generated — sessions won't survive restarts
     # or multi-worker deploys.
-    SECRET_KEY: str = ""
+    SECRET_KEY: SecretStr = SecretStr("")
 
     # Debug — enables verbose agent logging and unauthenticated /query access.
     DEBUG: bool = False

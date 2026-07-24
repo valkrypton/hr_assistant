@@ -84,6 +84,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Long natural-language prompt/message strings, not code lines.
 "core/agent.py" = ["E501"]
+"core/agent_prompts.py" = ["E501"]
 "core/rbac/context.py" = ["E501"]
 "adapters/slack.py" = ["E501"]
 # Ad-hoc scripts / seed data / SQL fixtures — long lines are data, not logic.

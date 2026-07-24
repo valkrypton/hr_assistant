@@ -22,20 +22,18 @@ import hashlib
 import hmac
 import ssl
 import time
-from contextlib import contextmanager
 from functools import lru_cache
 
 import certifi
-import sqlalchemy
 import structlog
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-from sqlalchemy.orm import Session
 
 from core.agent import query as agent_query
-from core.config import DEFAULT_ENGINE_ARGS, settings
+from core.config import settings
+from core.db import db_session
 from core.rbac.context import RBACContext
-from core.rbac.models import HRUser
+from core.rbac.repository import HRUserRepository
 
 logger = structlog.get_logger(__name__)
 
@@ -150,36 +148,6 @@ def _format_blocks(answer: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# DB helpers  (import-time engine avoidance — use the app engine lazily)
-# ---------------------------------------------------------------------------
-
-
-def _get_app_engine():
-    global _app_engine
-    if _app_engine is None:
-        _app_engine = sqlalchemy.create_engine(settings.APP_DATABASE_URL, **DEFAULT_ENGINE_ARGS)
-    return _app_engine
-
-
-_app_engine = None
-
-
-@contextmanager
-def _db_session():
-    """One short-lived Session per DB-only block. Not reused across the
-    agent_query()/Slack API calls in process_event — those can take up to
-    ~15s and shouldn't hold a pool connection idle for that whole span (this
-    mirrors api.deps.db_session(), duplicated locally since adapters/ must
-    not import from api/ — see AGENTS.md import rules)."""
-    with Session(_get_app_engine()) as session:
-        yield session
-
-
-def _lookup_user(session: Session, slack_user_id: str) -> HRUser | None:
-    return session.query(HRUser).filter_by(slack_user_id=slack_user_id, is_active=True).first()
-
-
-# ---------------------------------------------------------------------------
 # Thread history  (FR: conversation continuity within a Slack thread)
 # ---------------------------------------------------------------------------
 
@@ -189,7 +157,7 @@ _HISTORY_MAX_TURNS = 10  # max prior turns to include (5 exchanges)
 @lru_cache(maxsize=1)
 def _slack_client() -> WebClient:
     ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-    return WebClient(token=settings.SLACK_BOT_TOKEN, ssl=ssl_ctx)
+    return WebClient(token=settings.SLACK_BOT_TOKEN.get_secret_value(), ssl=ssl_ctx)
 
 
 _bot_user_id_cache: str | None = None
@@ -306,8 +274,8 @@ def process_event(
     # neither should hold a pool connection idle for their duration (the
     # agent call alone can take up to ~15s).
     t_lookup = time.monotonic()
-    with _db_session() as session:
-        hr_user = _lookup_user(session, slack_user_id)
+    with db_session() as session:
+        hr_user = HRUserRepository.get_by_slack_user_id(session, slack_user_id)
         user_lookup_ms = int((time.monotonic() - t_lookup) * 1000)
 
     if not hr_user:

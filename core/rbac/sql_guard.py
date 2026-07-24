@@ -131,8 +131,85 @@ _PERSON_FREE_TABLES = frozenset(
         "competency_level",
         "skill_category",
         "job_requisition",
+        # No FK to person or any person-linked table — confirmed with the
+        # team while closing the "mis-listed table" gap (2026-07-21).
+        "available_time",
     }
 )
+
+_ALL_CLASSIFIED_TABLES = (
+    frozenset({"person"}) | _PERSON_FK_TABLES | _PERSON_TEAM_FK_TABLES | _PERSON_FREE_TABLES
+)
+
+# Explicit, product-approved exceptions to the person-free FK check below —
+# a (table, column) pair that DOES reference person but was deliberately
+# judged not to need per-request RBAC scoping. NOT a blanket escape hatch:
+# every entry here must be justified in docs/rbac-classification-gaps.md, and
+# adding one should be as deliberate as adding a table to _PERSON_FREE_TABLES
+# itself.
+#
+# team.lead_id: which person leads a team is treated as org-chart metadata,
+# the same category as department names — not on the forbidden-columns list
+# (salary/CNIC/DOB/etc.) and not "whose record is this" employee data — so
+# it stays visible company-wide rather than scoped to the requester's own
+# department/team. Confirmed as a product decision, not a default I picked.
+_APPROVED_PERSON_FK_EXCEPTIONS = frozenset(
+    {
+        ("team", "lead_id"),
+    }
+)
+
+
+def assert_tables_classified(included_tables: list[str]) -> None:
+    """
+    Defense-in-depth against an *unlisted* table: fail closed at startup,
+    not just at query time. rewrite_sql already rejects an unclassified
+    table for a restricted role's actual query — this catches the same gap
+    at deploy time instead, before any request is ever served, by comparing
+    the deployed INCLUDED_TABLES against the three classification sets above.
+    """
+    unclassified = sorted(set(included_tables) - _ALL_CLASSIFIED_TABLES)
+    if unclassified:
+        raise RuntimeError(
+            f"INCLUDED_TABLES contains table(s) not classified in sql_guard's "
+            f"scope-enforcement sets: {', '.join(unclassified)}. Add each to "
+            "_PERSON_FK_TABLES, _PERSON_TEAM_FK_TABLES, or _PERSON_FREE_TABLES "
+            "in core/rbac/sql_guard.py before a restricted role can query it."
+        )
+
+
+def assert_person_free_tables_have_no_person_fk(metadata, included_tables: list[str]) -> None:
+    """
+    Defense-in-depth against a *mis*-listed table: assert_tables_classified
+    only catches a table missing from all three sets — a table wrongly
+    placed IN _PERSON_FREE_TABLES is still "classified" and would pass that
+    check while leaking person-scoped data to every restricted role.
+
+    `metadata` is a reflected sqlalchemy.MetaData (SQLDatabase.from_uri
+    already reflects one) — walk each _PERSON_FREE_TABLES member actually in
+    use and fail closed if it carries a person_id column or an FK into
+    `person`, unless that specific (table, column) is an explicit,
+    documented exception (_APPROVED_PERSON_FK_EXCEPTIONS above).
+    """
+    suspects = []
+    for name in sorted(set(included_tables) & _PERSON_FREE_TABLES):
+        table = metadata.tables.get(name)
+        if table is None:
+            continue
+        for col in table.columns:
+            if (name, col.name) in _APPROVED_PERSON_FK_EXCEPTIONS:
+                continue
+            has_person_fk = any(fk.column.table.name == "person" for fk in col.foreign_keys)
+            if col.name == "person_id" or has_person_fk:
+                suspects.append(name)
+                break
+    if suspects:
+        raise RuntimeError(
+            f"Table(s) classified as person-free in sql_guard._PERSON_FREE_TABLES "
+            f"actually carry a person_id column or a foreign key into person: "
+            f"{', '.join(suspects)}. Reclassify into _PERSON_FK_TABLES (or "
+            "_PERSON_TEAM_FK_TABLES) before a restricted role can query it."
+        )
 
 
 def rewrite_sql(sql: str, rbac_ctx: RBACContext | None) -> str:

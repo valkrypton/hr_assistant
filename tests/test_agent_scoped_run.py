@@ -155,3 +155,176 @@ class TestErpDbCaching:
 
         assert db._engine.pool._pre_ping is True
         assert db._engine.pool._recycle == 300
+
+
+class TestTableClassificationGuards:
+    """
+    Regression tests for the two startup checks added alongside
+    docs/rbac-classification-gaps.md: an *unlisted* INCLUDED_TABLES entry
+    (assert_tables_classified) and a person-bearing table *mis*-listed as
+    person-free (assert_person_free_tables_have_no_person_fk) must both fail
+    closed at build time, not leak silently at query time.
+    """
+
+    def test_unclassified_included_table_raises_at_build_time(self, tmp_path):
+        import sqlite3
+
+        import core.agent as agent_mod
+        from core.config import settings
+
+        db_path = tmp_path / "unclassified.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE person (id INTEGER PRIMARY KEY)")
+        # `mystery` is in INCLUDED_TABLES but not in any of sql_guard's three
+        # classification sets — this is exactly the gap the real .env hit
+        # with available_time/peer_review before they were resolved.
+        conn.execute("CREATE TABLE mystery (id INTEGER PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+        db_url = f"sqlite:///{db_path}"
+
+        with (
+            patch.object(settings, "INCLUDED_TABLES", "person,mystery"),
+            patch.object(settings, "DATABASE_URL", db_url),
+            patch("core.agent.get_llm", return_value=object()),
+            patch("core.agent.create_sql_agent", side_effect=lambda llm, db, **kw: db),
+        ):
+            with pytest.raises(RuntimeError, match="mystery"):
+                agent_mod._build_agent(None)
+
+    def test_person_free_table_with_person_fk_raises_at_build_time(self, tmp_path):
+        """The concrete 'mis-listed table' regression: a table wrongly placed
+        in _PERSON_FREE_TABLES that actually carries a person_id column must
+        be caught, not silently trusted."""
+        import sqlite3
+
+        import core.agent as agent_mod
+        import core.rbac.sql_guard as sql_guard
+        from core.config import settings
+
+        db_path = tmp_path / "misclassified.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE person (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE leaky (id INTEGER PRIMARY KEY, person_id INTEGER, note TEXT)")
+        conn.commit()
+        conn.close()
+        db_url = f"sqlite:///{db_path}"
+
+        with (
+            patch.object(settings, "INCLUDED_TABLES", "person,leaky"),
+            patch.object(settings, "DATABASE_URL", db_url),
+            patch("core.agent.get_llm", return_value=object()),
+            patch("core.agent.create_sql_agent", side_effect=lambda llm, db, **kw: db),
+            patch.object(
+                sql_guard,
+                "_PERSON_FREE_TABLES",
+                frozenset(sql_guard._PERSON_FREE_TABLES | {"leaky"}),
+            ),
+            patch.object(
+                sql_guard,
+                "_ALL_CLASSIFIED_TABLES",
+                sql_guard._ALL_CLASSIFIED_TABLES | {"leaky"},
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="leaky"):
+                agent_mod._build_agent(None)
+
+    def test_person_free_table_without_person_fk_is_fine(self, tmp_path):
+        """Sanity check: a genuinely person-free table in INCLUDED_TABLES
+        must NOT trip the mis-listed-table guard."""
+        import sqlite3
+
+        import core.agent as agent_mod
+        from core.config import settings
+
+        db_path = tmp_path / "clean.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE person (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE department (id INTEGER PRIMARY KEY, name TEXT)")
+        conn.commit()
+        conn.close()
+        db_url = f"sqlite:///{db_path}"
+
+        with (
+            patch.object(settings, "INCLUDED_TABLES", "person,department"),
+            patch.object(settings, "DATABASE_URL", db_url),
+            patch("core.agent.get_llm", return_value=object()),
+            patch("core.agent.create_sql_agent", side_effect=lambda llm, db, **kw: db),
+        ):
+            # department is already in _PERSON_FREE_TABLES — must not raise.
+            agent_mod._build_agent(None)
+
+    def test_declared_fk_under_a_non_person_id_name_is_still_caught(self, tmp_path):
+        """The name heuristic (col.name == "person_id") only catches one
+        shape of mis-listing. A declared FOREIGN KEY constraint into person
+        under a different column name (e.g. team.lead_id in the real ERP
+        schema — see docs/rbac-classification-gaps.md) must be caught too,
+        via the has_person_fk branch, not just the name check."""
+        import sqlite3
+
+        import core.agent as agent_mod
+        import core.rbac.sql_guard as sql_guard
+        from core.config import settings
+
+        db_path = tmp_path / "declared_fk.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE person (id INTEGER PRIMARY KEY)")
+        conn.execute(
+            "CREATE TABLE owned_thing ("
+            "id INTEGER PRIMARY KEY, owner_id INTEGER, "
+            "FOREIGN KEY(owner_id) REFERENCES person(id))"
+        )
+        conn.commit()
+        conn.close()
+        db_url = f"sqlite:///{db_path}"
+
+        with (
+            patch.object(settings, "INCLUDED_TABLES", "person,owned_thing"),
+            patch.object(settings, "DATABASE_URL", db_url),
+            patch("core.agent.get_llm", return_value=object()),
+            patch("core.agent.create_sql_agent", side_effect=lambda llm, db, **kw: db),
+            patch.object(
+                sql_guard,
+                "_PERSON_FREE_TABLES",
+                frozenset(sql_guard._PERSON_FREE_TABLES | {"owned_thing"}),
+            ),
+            patch.object(
+                sql_guard,
+                "_ALL_CLASSIFIED_TABLES",
+                sql_guard._ALL_CLASSIFIED_TABLES | {"owned_thing"},
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="owned_thing"):
+                agent_mod._build_agent(None)
+
+    def test_team_lead_id_approved_exception_does_not_raise(self, tmp_path):
+        """team.lead_id is a real FK into person (confirmed against
+        scripts/seed_erp.py / core/context/schema.md) but is an explicit,
+        documented product decision (docs/rbac-classification-gaps.md) not
+        to scope it — must not trip the guard."""
+        import sqlite3
+
+        import core.agent as agent_mod
+        from core.config import settings
+
+        db_path = tmp_path / "team_lead_id.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE person (id INTEGER PRIMARY KEY)")
+        conn.execute(
+            "CREATE TABLE team ("
+            "id INTEGER PRIMARY KEY, name TEXT, lead_id INTEGER, "
+            "FOREIGN KEY(lead_id) REFERENCES person(id))"
+        )
+        conn.commit()
+        conn.close()
+        db_url = f"sqlite:///{db_path}"
+
+        with (
+            patch.object(settings, "INCLUDED_TABLES", "person,team"),
+            patch.object(settings, "DATABASE_URL", db_url),
+            patch("core.agent.get_llm", return_value=object()),
+            patch("core.agent.create_sql_agent", side_effect=lambda llm, db, **kw: db),
+        ):
+            # team is already in _PERSON_FREE_TABLES and lead_id is already
+            # in _APPROVED_PERSON_FK_EXCEPTIONS — must not raise.
+            agent_mod._build_agent(None)

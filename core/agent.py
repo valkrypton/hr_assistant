@@ -6,22 +6,24 @@ standalone (scripts, tests, notebooks) without starting a web server.
 """
 
 import copy
-import re
 import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-import sqlglot
-import sqlglot.expressions as exp
 import structlog
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_community.callbacks import get_openai_callback
 from langchain_community.utilities import SQLDatabase
 
+from core.agent_prompts import HR_RECORDS_NOTE, build_prefix
+from core.agent_sql_extraction import extract_tables as _extract_tables
 from core.config import DEFAULT_ENGINE_ARGS, settings
 from core.providers.factory import get_llm
-from core.rbac.context import FORBIDDEN_COLUMNS
+from core.rbac.sql_guard import (
+    assert_person_free_tables_have_no_person_fk,
+    assert_tables_classified,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -39,105 +41,6 @@ class QueryResult:
 
 
 # ---------------------------------------------------------------------------
-# Build the forbidden-columns string once from the canonical set in rbac/context.
-# ---------------------------------------------------------------------------
-
-
-def _forbidden_columns_str() -> str:
-    return ", ".join(sorted(FORBIDDEN_COLUMNS))
-
-
-# ---------------------------------------------------------------------------
-# Base prefix — immutable rules the DB cannot supply.
-# Full schema is injected at query time via the [Full schema context] block.
-# ---------------------------------------------------------------------------
-
-_BASE_PREFIX = """You are an autonomous HR data analyst agent with direct, read-only
-access to the company ERP database. Answer workforce questions by querying the
-database yourself — right now, without asking for anything first.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PRIVACY — ABSOLUTE (all roles, every request)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-These columns must NEVER appear in any SELECT list or response:
-  {forbidden_columns}
-If asked for any of these, respond only: "That information is not available."
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ROLE-BASED ACCESS CONTROL (ABSOLUTE RULES)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Every request includes an [Access control rules for this request] block.
-Read and enforce it before writing any SQL.
-
-{rbac_prefix}
-
-- DATA SCOPE restrictions apply to every SQL query — add required WHERE/JOIN. No exceptions.
-- If a request falls outside your DATA SCOPE, respond explicitly: "You don't have access to that data." Do not attempt to query or return out-of-scope data.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-OPERATIONAL RULES:
-- Run queries yourself using sql_db_query. Never ask the user for SQL or data.
-- SELECT only — never INSERT, UPDATE, DELETE, DROP, or ALTER.
-- Never use SELECT * — always list the specific columns you need.
-  (COUNT(*) is fine.) Wildcard projections are rejected by the database layer.
-- If a query returns 0 rows or COUNT = 0, answer that fact directly. Do not
-  retry with different SQL variations.
-- Provide only the direct answer — no narration, no SQL, no "Running query now"
-  commentary, no explanation of your approach.
-
-RESPONSE FORMAT:
-- Always use complete sentences. Never return a bare number or one-word answer.
-  ✓ "There were 36 new joiners in 2025."   ✗ "36"
-- Employee lists (≤10): bullet list, each line = full name + department.
-- Employee lists (>10): bullet list + closing summary sentence with total count.
-- Counts / single values: one sentence.
-- Grouped / breakdown results: bullet list in "Label: value" format.
-- Dates: "12 Jan 2025" format, not ISO (2025-01-12).
-- Never output raw JSON or SQL in the response.
-
-NON-DISCOVERABLE BUSINESS RULES (these are not in the schema — memorise them):
-
-Status IDs (person.status_id — the status table is not queryable):
-  10=Active  22=Active-B(Bench)  17=Probation
-  11=Resigned  12=Terminated  14=Laid off  20=End of contract  13=Inactive
-
-Employment classification (employment_type.type):
-  employed     → type IN (1=Employee, 4=Intern, 5=EOR)
-  subcontractor → type IN (2=Contract, 3=Sub-contractor)
-
-Column name traps — commonly hallucinated wrong values:
-  - Employee name  : person.full_name  (NOT first_name / last_name)
-  - Hire date      : person.joining_date
-  - Exit date      : person.separation_date  (NULL = still employed)
-  - Separation type: users_personresignation.separation_type  (NOT on person table)
-      2=Resignation  3=Termination  4=End of Contract; always filter status=1 (Approved)
-      Use last_working_day for exit-year filtering
-  - Current team FK: person_team.nsubteam_id  → team.id
-  - Approved leave : leave_record.status = 1
-  - Log submitted  : person_week_log.is_completed = true
-  - Log hours      : person_week_log.hours + person_week_log.minutes / 60.0
-  - Current assignment: person_team WHERE end_date IS NULL AND is_active = true
-  - Competency assessment: person_competency WHERE status = 2 AND is_enabled = true
-{hr_records_note}
-The full database schema is in the [Full schema context] block of every request."""
-
-
-_UNRESTRICTED_RBAC = """Current user role: UNRESTRICTED (full company-wide access).
-All employees, departments, and teams are visible."""
-
-_RESTRICTED_RBAC = """Current user role: {role}
-{scope_description}
-Enforce the DATA SCOPE above on every query."""
-
-_HR_RECORDS_NOTE = """
-NO hr_records TABLE: For warnings/disciplinary queries use these proxies instead:
-  • core_personstatushistory — status transitions (e.g. moves to Inactive/Probation)
-  • person_week_log — compliance gaps (is_completed = false)
-  Always state in your response that direct HR warning records are unavailable."""
-
-
-# ---------------------------------------------------------------------------
 # Agent construction
 # ---------------------------------------------------------------------------
 
@@ -149,6 +52,7 @@ def _get_included_tables() -> list[str]:
             "INCLUDED_TABLES must be set in .env. "
             "List only the tables the agent needs (e.g. person,department,leave_record)."
         )
+    assert_tables_classified(tables)
     return tables
 
 
@@ -220,6 +124,11 @@ def _build_agent(rbac_ctx=None):
     llm = get_llm()
     included = tuple(_get_included_tables())
     db = copy.copy(_erp_db(settings.DATABASE_URL, included))
+    # Defense-in-depth against a person-bearing table wrongly classified as
+    # person-free — assert_tables_classified (above) can't catch this since
+    # a mis-listed table is still, by definition, present in one of the
+    # three sets.
+    assert_person_free_tables_have_no_person_fk(db._metadata, list(included))
 
     # Imported per-call (not hoisted to module level) so tests can patch
     # core.rbac.sql_guard.rewrite_sql before this runs — see
@@ -243,29 +152,9 @@ def _build_agent(rbac_ctx=None):
     db.run = _scoped_run
 
     hr_records_note = (
-        "" if _hr_records_available(settings.DATABASE_URL, included) else _HR_RECORDS_NOTE
+        "" if _hr_records_available(settings.DATABASE_URL, included) else HR_RECORDS_NOTE
     )
-
-    if rbac_ctx is None or rbac_ctx.is_unrestricted:
-        rbac_prefix = _UNRESTRICTED_RBAC
-    else:
-        scope_lines = rbac_ctx.scope_prompt().splitlines()
-        # The base prefix already includes the forbidden-columns rule; drop that line
-        # here to avoid duplication. Retain ALL other scope/enforcement lines so
-        # required JOINs/filters (e.g. nsubteam_id, end_date IS NULL) are not lost.
-        scope_description = "\n".join(
-            ln for ln in scope_lines if ln.strip() and not ln.startswith("FORBIDDEN COLUMNS")
-        )
-        rbac_prefix = _RESTRICTED_RBAC.format(
-            role=rbac_ctx.role.value.upper().replace("_", " "),
-            scope_description=scope_description,
-        )
-
-    prefix = _BASE_PREFIX.format(
-        forbidden_columns=_forbidden_columns_str(),
-        rbac_prefix=rbac_prefix,
-        hr_records_note=hr_records_note,
-    )
+    prefix = build_prefix(rbac_ctx, hr_records_note)
 
     return create_sql_agent(
         llm=llm,
@@ -306,55 +195,6 @@ def get_agent(rbac_ctx=None):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _regex_extract_tables(sql: str) -> set[str]:
-    """Fallback extractor — identifiers after FROM/JOIN keywords via regex."""
-    tables: set[str] = set()
-    for match in re.finditer(r'\b(?:FROM|JOIN)\s+([`"\[]?[\w]+[`"\]]?)', sql, re.IGNORECASE):
-        tables.add(match.group(1).strip('`"[]'))
-    return tables
-
-
-def _extract_tables(intermediate_steps) -> str:
-    """
-    Parse table names from sql_db_query tool calls in the agent's intermediate
-    steps and return them as a sorted, comma-separated string.
-
-    intermediate_steps is a list of (AgentAction, observation) tuples.
-    AgentAction.tool == "sql_db_query" and AgentAction.tool_input holds the SQL.
-
-    Uses sqlglot (already a dependency — see core/rbac/sql_guard.py) to walk
-    the real parse tree so subqueries and CTEs are captured correctly, and to
-    exclude CTE alias names (e.g. the "x" in "WITH x AS (...)") which are not
-    real tables. Falls back to a regex over FROM/JOIN on parse failure so
-    table extraction never breaks on unusual SQL.
-    """
-    tables: set[str] = set()
-    for action, _ in intermediate_steps or []:
-        tool = getattr(action, "tool", None)
-        sql = getattr(action, "tool_input", None)
-        if tool != "sql_db_query" or not sql:
-            continue
-        if isinstance(sql, dict):
-            sql = sql.get("query", "")
-
-        try:
-            cte_names: set[str] = set()
-            found: set[str] = set()
-            for stmt in sqlglot.parse(sql, read="postgres"):
-                if stmt is None:
-                    continue
-                for cte in stmt.find_all(exp.CTE):
-                    if cte.alias:
-                        cte_names.add(cte.alias.lower())
-                for table in stmt.find_all(exp.Table):
-                    found.add(table.name)
-            tables.update(name for name in found if name.lower() not in cte_names)
-        except Exception:
-            tables.update(_regex_extract_tables(sql))
-
-    return ", ".join(sorted(tables)) if tables else ""
 
 
 @lru_cache(maxsize=1)
