@@ -68,7 +68,7 @@ def test_db_url(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def mock_query():
-    """Patch core.agent.query to return a canned QueryResult (module-scoped)."""
+    """Patch core.agent.query to return a canned AgentQueryResult (module-scoped)."""
     from core.agent import AgentQueryResult
 
     result = AgentQueryResult(
