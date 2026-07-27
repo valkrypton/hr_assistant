@@ -4,7 +4,7 @@ the tables_accessed field on QueryResult (observability), not for RBAC
 enforcement (that's core/rbac/sql_guard.py, which runs at the db.run() call
 site regardless of what this module reports).
 
-Split out of core/agent.py for the same reason as core/agent_prompts.py:
+Split out of core/agent.py for the same reason as core/agent/prompts.py:
 an independently readable, self-contained responsibility that nothing
 patches directly.
 """

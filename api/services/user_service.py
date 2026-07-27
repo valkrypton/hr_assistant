@@ -13,15 +13,7 @@ logger = structlog.get_logger(__name__)
 
 def list_users(session: Session) -> list[UserResponse]:
     return [
-        UserResponse(
-            id=u.id,
-            employee_id=u.employee_id,
-            role=u.role,
-            slack_user_id=u.slack_user_id,
-            department_id=u.department_id,
-            team_id=u.team_id,
-            is_active=u.is_active,
-        )
+        UserResponse.model_validate(u)
         for u in session.query(HRUser).filter_by(is_active=True).all()
     ]
 
@@ -44,15 +36,7 @@ def register_user(session: Session, body: UserCreate) -> UserResponse:
         raise HTTPException(
             status_code=409, detail="A user with this Slack user ID already exists."
         ) from exc
-    return UserResponse(
-        id=user.id,
-        employee_id=user.employee_id,
-        role=user.role,
-        slack_user_id=user.slack_user_id,
-        department_id=user.department_id,
-        team_id=user.team_id,
-        is_active=user.is_active,
-    )
+    return UserResponse.model_validate(user)
 
 
 def deregister_user(session: Session, user_id: int) -> None:

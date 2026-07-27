@@ -68,10 +68,10 @@ def test_db_url(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def mock_query():
-    """Patch core.agent.query to return a canned QueryResult (module-scoped)."""
-    from core.agent import QueryResult
+    """Patch core.agent.query to return a canned AgentQueryResult (module-scoped)."""
+    from core.agent import AgentQueryResult
 
-    result = QueryResult(
+    result = AgentQueryResult(
         answer=MOCK_ANSWER,
         tables_accessed="person,department",
         schema_rag_ms=10,
@@ -110,7 +110,7 @@ def client(test_db_url, mock_query):
         import sqlalchemy
         from sqlalchemy.orm import Session as _Session
 
-        from core.auth import hash_password
+        from api.auth import hash_password
         from core.rbac.models import AdminUser, Base
 
         engine = sqlalchemy.create_engine(test_db_url)

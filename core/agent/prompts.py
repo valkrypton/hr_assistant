@@ -4,8 +4,8 @@ System-prompt construction for the SQL agent.
 Split out of core/agent.py (which also builds/caches the agent and runs
 queries) so the prompt-templating responsibility is independently readable
 and testable. Nothing here is patched by tests, so this can be a plain
-module-level import in core/agent.py without affecting any `patch("core.agent....")`
-call site.
+module-level import in core/agent/factory.py without affecting any
+`patch("core.agent....")` call site.
 """
 
 from core.rbac.context import FORBIDDEN_COLUMNS
@@ -91,7 +91,6 @@ Column name traps — commonly hallucinated wrong values:
   - Log hours      : person_week_log.hours + person_week_log.minutes / 60.0
   - Current assignment: person_team WHERE end_date IS NULL AND is_active = true
   - Competency assessment: person_competency WHERE status = 2 AND is_enabled = true
-{hr_records_note}
 The full database schema is in the [Full schema context] block of every request."""
 
 
@@ -102,14 +101,8 @@ _RESTRICTED_RBAC = """Current user role: {role}
 {scope_description}
 Enforce the DATA SCOPE above on every query."""
 
-HR_RECORDS_NOTE = """
-NO hr_records TABLE: For warnings/disciplinary queries use these proxies instead:
-  • core_personstatushistory — status transitions (e.g. moves to Inactive/Probation)
-  • person_week_log — compliance gaps (is_completed = false)
-  Always state in your response that direct HR warning records are unavailable."""
 
-
-def build_prefix(rbac_ctx, hr_records_note: str) -> str:
+def build_prefix(rbac_ctx) -> str:
     """
     Assemble the full system prefix for a given RBAC context.
 
@@ -135,5 +128,4 @@ def build_prefix(rbac_ctx, hr_records_note: str) -> str:
     return _BASE_PREFIX.format(
         forbidden_columns=_forbidden_columns_str(),
         rbac_prefix=rbac_prefix,
-        hr_records_note=hr_records_note,
     )

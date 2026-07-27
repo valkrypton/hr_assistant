@@ -13,7 +13,7 @@ from fastapi import Depends, HTTPException, Security
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 
-from core.auth import (
+from api.auth import (
     hash_password,
     verify_password,
 )

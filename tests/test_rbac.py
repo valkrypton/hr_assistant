@@ -281,11 +281,11 @@ class TestAgentPrefixRendering:
         ],
     )
     def test_prefix_renders_for_all_roles(self, role, dept, team):
-        from core.agent_prompts import build_prefix
+        from core.agent.prompts import build_prefix
 
         ctx = make_ctx(role, dept_id=dept, team_id=team)
 
-        prefix = build_prefix(ctx, hr_records_note="")
+        prefix = build_prefix(ctx)
 
         assert len(prefix) > 100
         assert "PRIVACY" in prefix
