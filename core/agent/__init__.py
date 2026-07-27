@@ -7,7 +7,7 @@ standalone (scripts, tests, notebooks) without starting a web server.
 Split for SRP:
     core.agent.enrichment — schema load + message assembly
     core.agent.factory    — agent construction, caches, scoped-run guard
-    core.agent.runner     — query() orchestration + QueryResult
+    core.agent.runner     — query() orchestration + AgentQueryResult
 
 The collaborator names re-exported below (get_llm, create_sql_agent,
 get_openai_callback, _extract_tables) are part of the module's test contract:
