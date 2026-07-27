@@ -91,10 +91,13 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Long natural-language prompt/message strings, not code lines.
-"core/agent.py" = ["E501"]
-"core/agent_prompts.py" = ["E501"]
-"core/rbac/context.py" = ["E501"]
+"core/agent/*.py" = ["E501"]
+"core/rbac/prompt.py" = ["E501"]
 "adapters/slack.py" = ["E501"]
+# Package façade re-exports collaborator/helper names for the core.agent.*
+# monkeypatch test surface (see core/agent/__init__.py docstring) — these
+# imports are consumed by callers via attribute access, not within this file.
+"core/agent/__init__.py" = ["F401"]
 # Ad-hoc scripts / seed data / SQL fixtures — long lines are data, not logic.
 "scripts/seed_erp.py" = ["E501"]
 "tests/test_scope_execution.py" = ["E501"]

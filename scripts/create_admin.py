@@ -21,7 +21,7 @@ load_dotenv()
 import sqlalchemy  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
-from core.auth import hash_password  # noqa: E402
+from api.auth import hash_password  # noqa: E402
 from core.config import settings  # noqa: E402
 from core.rbac.models import AdminUser, Base  # noqa: E402
 

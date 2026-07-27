@@ -104,6 +104,7 @@ class TestErpDbCaching:
 
     def test_build_agent_reuses_cached_erp_db_across_calls(self, sqlite_db_url):
         import core.agent as agent_mod
+        from core.agent.factory import SQLDatabase
         from core.config import settings
 
         def _fake_create_sql_agent(llm, db, **kwargs):
@@ -114,9 +115,7 @@ class TestErpDbCaching:
             patch.object(settings, "DATABASE_URL", sqlite_db_url),
             patch("core.agent.get_llm", return_value=object()),
             patch("core.agent.create_sql_agent", side_effect=_fake_create_sql_agent),
-            patch.object(
-                agent_mod.SQLDatabase, "from_uri", wraps=agent_mod.SQLDatabase.from_uri
-            ) as from_uri_spy,
+            patch.object(SQLDatabase, "from_uri", wraps=SQLDatabase.from_uri) as from_uri_spy,
         ):
             # Simulates the shared unrestricted build plus two restricted
             # (dept_head / team_lead) builds against the same ERP target.

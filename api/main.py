@@ -21,10 +21,10 @@ from starlette.requests import Request as StarletteRequest
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from api.admin import HRUserAdmin
+from api.auth import verify_password
 from api.deps import app_engine
 from api.routes import health, query, slack, users
 from core.agent import get_agent
-from core.auth import verify_password
 from core.config import settings
 from core.executor import agent_executor
 from core.logging import configure_logging
