@@ -2,8 +2,9 @@
 without touching the real agent or DB."""
 
 from core.agent import AgentQueryResult
+from core.rbac.access import AccessLevel
 from core.rbac.context import RBACContext
-from core.rbac.roles import Role
+from core.rbac.erp_identity import ErpIdentity
 
 
 def test_run_agent_uses_injected_agent():
@@ -22,7 +23,7 @@ def test_run_agent_uses_injected_agent():
 
     from api.services.query_service import run_agent
 
-    ctx = RBACContext.superuser()
+    ctx = RBACContext.unrestricted()
     result = run_agent("how many staff?", ctx, agent=fake_agent)
 
     assert result.answer == "canned"
@@ -30,23 +31,25 @@ def test_run_agent_uses_injected_agent():
     assert captured["ctx"] is ctx
 
 
-def test_resolve_scope_uses_injected_repo():
+def test_resolve_scope_uses_injected_repo_and_resolver():
     from api.schemas.query import QueryRequest
     from api.services.query_service import resolve_scope
 
     class FakeUser:
-        role = Role.CTO_CEO.value
         employee_id = 1
-        department_id = None
-        team_id = None
 
     class FakeRepo:
         @staticmethod
         def get_by_slack_user_id(session, slack_user_id):
             return FakeUser()
 
+    def fake_resolve_ctx(person_id):
+        identity = ErpIdentity(person_id=person_id, auth_user_id=999, group_ids=frozenset({12}))
+        return RBACContext.for_identity(identity, AccessLevel.UNRESTRICTED)
+
     body = QueryRequest(query="hi", slack_user_id="U123")
-    ctx = resolve_scope(body, repo=FakeRepo())
+    ctx = resolve_scope(body, repo=FakeRepo(), resolve_ctx=fake_resolve_ctx)
 
     assert ctx is not None
-    assert ctx.role == Role.CTO_CEO
+    assert ctx.is_unrestricted is True
+    assert ctx.person_id == 1

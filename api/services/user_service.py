@@ -21,10 +21,7 @@ def list_users(session: Session) -> list[UserResponse]:
 def register_user(session: Session, body: UserCreate) -> UserResponse:
     user = HRUser(
         employee_id=body.employee_id,
-        role=body.role.value,
         slack_user_id=body.slack_user_id,
-        department_id=body.department_id,
-        team_id=body.team_id,
     )
     session.add(user)
     try:

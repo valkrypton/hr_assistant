@@ -23,7 +23,7 @@ def build_enriched_input(
     """Assemble the agent message: access rules, schema, prior turns, question."""
     parts = []
     if rbac_ctx is not None:
-        parts.append(f"[Access control rules for this request]\n{rbac_ctx.scope_prompt()}")
+        parts.append(f"[Access scope for this request]\n{rbac_ctx.scope_hint()}")
     if schema_block:
         parts.append(f"[Full schema context]\n\n{schema_block}")
     if conversation_history:

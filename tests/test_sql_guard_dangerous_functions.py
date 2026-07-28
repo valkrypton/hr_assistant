@@ -1,23 +1,22 @@
 """
 Regression tests for the dangerous-function / SELECT-INTO scope-guard fix.
 
-Previously a restricted role could exfiltrate any column of any table
+Previously a restricted access level could exfiltrate any column of any table
 (salary, NIC, DOB, ...) via query_to_xml('SELECT ... FROM person') or
 similar functions whose SQL-string argument the guard never inspected.
-rewrite_sql() must now reject these for every role, including unrestricted
-ones, before the SQL ever reaches the database.
+rewrite_sql() must now reject these for every access level, including
+unrestricted ones, before the SQL ever reaches the database.
 """
 
 import pytest
 
+from core.rbac.access import AccessLevel
 from core.rbac.context import RBACContext
-from core.rbac.roles import Role
 from core.rbac.sql_guard import rewrite_sql
 
 CONTEXTS = {
-    "superuser": RBACContext.superuser(),
-    "dept_head": RBACContext(role=Role.DEPT_HEAD, department_id=3),
-    "team_lead": RBACContext(role=Role.TEAM_LEAD, team_id=7),
+    "unrestricted": RBACContext.unrestricted(),
+    "self": RBACContext(access_level=AccessLevel.SELF, person_id=42),
 }
 
 DANGEROUS_FUNCTION_CALLS = [
@@ -40,7 +39,7 @@ NEWLY_BLOCKED_FUNCTION_CALLS = [
 ]
 
 
-class TestDangerousFunctionsBlockedForAllRoles:
+class TestDangerousFunctionsBlockedForAllAccessLevels:
     @pytest.mark.parametrize("ctx_name", list(CONTEXTS))
     @pytest.mark.parametrize("sql", DANGEROUS_FUNCTION_CALLS)
     def test_dangerous_function_call_raises(self, ctx_name, sql):
@@ -49,9 +48,9 @@ class TestDangerousFunctionsBlockedForAllRoles:
             rewrite_sql(sql, ctx)
 
     @pytest.mark.parametrize("sql", NEWLY_BLOCKED_FUNCTION_CALLS)
-    def test_newly_blocked_function_call_raises_for_superuser(self, sql):
+    def test_newly_blocked_function_call_raises_for_unrestricted(self, sql):
         with pytest.raises(ValueError, match="Function blocked by scope guard"):
-            rewrite_sql(sql, CONTEXTS["superuser"])
+            rewrite_sql(sql, CONTEXTS["unrestricted"])
 
     @pytest.mark.parametrize("ctx_name", list(CONTEXTS))
     def test_schema_qualified_call_raises(self, ctx_name):
@@ -66,17 +65,17 @@ class TestDangerousFunctionsBlockedForAllRoles:
             rewrite_sql("SELECT full_name INTO exfil FROM person", ctx)
 
 
-class TestLegitimateSuperuserQueriesUnaffected:
+class TestLegitimateUnrestrictedQueriesUnaffected:
     """The guard must not over-block typed aggregate functions or plain SELECTs."""
 
     def test_count_star_allowed(self):
-        result = rewrite_sql("SELECT COUNT(*) FROM person", CONTEXTS["superuser"])
+        result = rewrite_sql("SELECT COUNT(*) FROM person", CONTEXTS["unrestricted"])
         assert "COUNT(*)" in result
 
     def test_avg_aggregate_allowed(self):
-        result = rewrite_sql("SELECT AVG(competency_score) FROM person", CONTEXTS["superuser"])
+        result = rewrite_sql("SELECT AVG(competency_score) FROM person", CONTEXTS["unrestricted"])
         assert "AVG" in result
 
     def test_plain_select_allowed(self):
-        result = rewrite_sql("SELECT full_name FROM person", CONTEXTS["superuser"])
+        result = rewrite_sql("SELECT full_name FROM person", CONTEXTS["unrestricted"])
         assert "full_name" in result

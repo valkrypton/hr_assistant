@@ -17,3 +17,7 @@ class AgentRunner(Protocol):
 
 class UserRepo(Protocol):
     def get_by_slack_user_id(self, session: Session, slack_user_id: str) -> HRUser | None: ...
+
+
+class ScopeResolver(Protocol):
+    def __call__(self, person_id: int) -> RBACContext | None: ...

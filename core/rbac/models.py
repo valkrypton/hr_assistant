@@ -57,17 +57,12 @@ class HRUser(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
 
     # Link to the ERP person row — not a FK so the table works even if
-    # the ERP schema changes or lives on a different logical DB.
+    # the ERP schema changes or lives on a different logical DB. This IS
+    # person.id, and it is the sole input to RBAC resolution
+    # (core/rbac/resolution.py).
     employee_id = Column(Integer, nullable=False, index=True)
 
-    role = Column(String(20), nullable=False)
-
     slack_user_id = Column(String(20), nullable=True)
-
-    # Scope columns — only relevant for DEPT_HEAD and TEAM_LEAD.
-    # CTO/CEO and HR_MANAGER leave these NULL (full access).
-    department_id = Column(Integer, nullable=True)
-    team_id = Column(Integer, nullable=True)
 
     is_active = Column(Boolean, nullable=False, default=True)
 
@@ -84,10 +79,7 @@ class HRUser(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<HRUser id={self.id} employee_id={self.employee_id} "
-            f"role={self.role} slack={self.slack_user_id}>"
-        )
+        return f"<HRUser id={self.id} employee_id={self.employee_id} slack={self.slack_user_id}>"
 
 
 class SlackSeenEvent(Base):

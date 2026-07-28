@@ -9,7 +9,9 @@ without a live database or LLM.
 
 The APP_DATABASE_URL is overridden to a fresh SQLite file per test session
 so route handlers automatically use the test DB (they call app_engine() at
-request time, which reads settings.APP_DATABASE_URL).
+request time, which reads settings.APP_DATABASE_URL). DATABASE_URL points at
+the same file, standing in for the ERP: resolve_context (core/rbac/) reads
+the auth_user/person/auth_user_groups tables created below.
 """
 
 import base64
@@ -121,6 +123,31 @@ def client(test_db_url, mock_query):
             )
             s.commit()
 
+        # DATABASE_URL == APP_DATABASE_URL here (same test SQLite file), so
+        # resolve_context's ERP read needs these tables to exist even though
+        # this file otherwise mocks the agent, not RBAC resolution. Minimal
+        # stand-in for the ERP's auth_user/person/auth_user_groups — see
+        # core/rbac/erp_identity.py for the queries these back.
+        with engine.begin() as conn:
+            conn.execute(
+                sqlalchemy.text(
+                    "CREATE TABLE IF NOT EXISTS auth_user (id INTEGER PRIMARY KEY, "
+                    "is_active BOOLEAN NOT NULL, email VARCHAR(254) NOT NULL DEFAULT '')"
+                )
+            )
+            conn.execute(
+                sqlalchemy.text(
+                    "CREATE TABLE IF NOT EXISTS person (id INTEGER PRIMARY KEY, "
+                    "user_id INTEGER NOT NULL, is_active BOOLEAN NOT NULL)"
+                )
+            )
+            conn.execute(
+                sqlalchemy.text(
+                    "CREATE TABLE IF NOT EXISTS auth_user_groups (id INTEGER PRIMARY KEY, "
+                    "user_id INTEGER NOT NULL, group_id INTEGER NOT NULL)"
+                )
+            )
+
         with patch("core.agent.get_agent"):  # skip LLM warmup in lifespan
             from importlib import reload
 
@@ -142,15 +169,42 @@ _user_counter = 0
 
 @pytest.fixture()
 def registered_user(client):
-    """Register a CTO/CEO test user with a unique ID per test."""
+    """Register a test user with a unique ID per test, and give it a matching
+    ERP-side auth_user/person row plus HR-group membership (unrestricted
+    access) so resolve_context(employee_id) succeeds — RBAC access level
+    itself is resolved from the ERP at request time (core/rbac/resolution.py),
+    not stored on hr_assistant_users."""
+    import sqlalchemy
+
+    from core.config import settings
+
     global _user_counter
     _user_counter += 1
     slack_id = f"U_TEST_{_user_counter}"
+    employee_id = 900 + _user_counter
+
+    engine = sqlalchemy.create_engine(settings.DATABASE_URL)
+    with engine.begin() as conn:
+        conn.execute(
+            sqlalchemy.text("INSERT INTO auth_user (id, is_active) VALUES (:id, 1)"),
+            {"id": employee_id},
+        )
+        conn.execute(
+            sqlalchemy.text("INSERT INTO person (id, user_id, is_active) VALUES (:id, :id, 1)"),
+            {"id": employee_id},
+        )
+        conn.execute(
+            sqlalchemy.text(
+                "INSERT INTO auth_user_groups (user_id, group_id) VALUES (:id, :group_id)"
+            ),
+            {"id": employee_id, "group_id": settings.HR_GROUP_ID},
+        )
+    engine.dispose()
+
     r = client.post(
         "/users",
         json={
-            "employee_id": 900 + _user_counter,
-            "role": "cto_ceo",
+            "employee_id": employee_id,
             "slack_user_id": slack_id,
         },
         headers=_ADMIN_HEADERS,
@@ -395,7 +449,6 @@ class TestAdminAuth:
                 "/users",
                 json={
                     "employee_id": 1,
-                    "role": "cto_ceo",
                     "slack_user_id": "U_NOAUTH",
                 },
             ).status_code
@@ -456,20 +509,18 @@ class TestUserAdmin:
             "/users",
             json={
                 "employee_id": 777,
-                "role": "hr_manager",
                 "slack_user_id": "U_ADMIN_TEST",
             },
             headers=_ADMIN_HEADERS,
         )
         assert r.status_code == 201
         data = r.json()
-        assert data["role"] == "hr_manager"
         assert data["slack_user_id"] == "U_ADMIN_TEST"
         # cleanup
         client.delete(f"/users/{data['id']}", headers=_ADMIN_HEADERS)
 
     def test_duplicate_slack_id_rejected(self, client):
-        payload = {"employee_id": 1, "role": "cto_ceo", "slack_user_id": "U_DUP_TEST"}
+        payload = {"employee_id": 1, "slack_user_id": "U_DUP_TEST"}
         r1 = client.post("/users", json=payload, headers=_ADMIN_HEADERS)
         assert r1.status_code == 201
         r2 = client.post("/users", json=payload, headers=_ADMIN_HEADERS)
@@ -481,7 +532,6 @@ class TestUserAdmin:
             "/users",
             json={
                 "employee_id": 555,
-                "role": "team_lead",
                 "slack_user_id": "U_DEL_TEST",
             },
             headers=_ADMIN_HEADERS,

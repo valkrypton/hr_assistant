@@ -84,6 +84,19 @@ class Settings(BaseSettings):
     # All other tables in the database are invisible to the agent.
     INCLUDED_TABLES: str = ""
 
+    # ERP Django auth group IDs that grant company-wide bot access.
+    # IDs, not names — see core/rbac/access.py for why. Verified at boot
+    # against HR_GROUP_NAME / MANAGEMENT_GROUP_NAME so a rename in the ERP
+    # fails the deploy instead of silently regranting access.
+    HR_GROUP_ID: int = 12
+    HR_GROUP_NAME: str = "Pod"
+    MANAGEMENT_GROUP_ID: int = 13
+    MANAGEMENT_GROUP_NAME: str = "Management"
+
+    # How long a resolved ERP identity + access level stays cached.
+    # Bounds the window in which a revoked group membership still works.
+    RBAC_CACHE_TTL_SECONDS: int = 900
+
     # Pool sizing for the shared ERP engine (core/agent.py _erp_db). That
     # engine is now a single process-wide cached instance instead of one
     # built fresh per restricted-role request, so this caps total concurrent

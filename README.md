@@ -66,6 +66,10 @@ Edit `.env`:
 | `APP_DATABASE_URL` | PostgreSQL connection string (app DB — users) |
 | `AI_PROVIDER` | `ollama` (default) \| `openai` \| `anthropic` \| `xai` \| `qwen` \| `librechat` |
 | `INCLUDED_TABLES` | Comma-separated whitelist of tables the agent may query |
+| `HR_GROUP_ID` | ERP `auth_group.id` of the HR group (default 12, "Pod") — members get company-wide access |
+| `MANAGEMENT_GROUP_ID` | ERP `auth_group.id` of the Management group (default 13) — members get company-wide access |
+| `HR_GROUP_NAME` / `MANAGEMENT_GROUP_NAME` | Descriptive names for the IDs above (informational; not verified against the ERP) |
+| `RBAC_CACHE_TTL_SECONDS` | How long a resolved access level is cached (default 900) |
 | `SLACK_BOT_TOKEN` | Slack bot OAuth token (`xoxb-…`) |
 | `SLACK_SIGNING_SECRET` | Slack signing secret for request verification |
 | `SECRET_KEY` | Signs admin session cookies (`/admin` panel). Required in production (startup error when `DEBUG=false` and unset) — generate with `openssl rand -hex 32` |
@@ -165,8 +169,10 @@ uv run python scripts/create_admin.py <username>
 ```bash
 curl -u admin:yourpassword -X POST http://localhost:8000/users \
   -H "Content-Type: application/json" \
-  -d '{"employee_id": 1, "role": "hr_manager", "slack_user_id": "U012AB3CD"}'
+  -d '{"employee_id": 1, "slack_user_id": "U012AB3CD"}'
 ```
+
+`employee_id` must be the person's `person.id` in the ERP — RBAC access level is resolved from ERP group membership at request time, not stored here (see `docs/superpowers/specs/2026-07-27-deterministic-rbac-design.md`).
 
 ### `GET /health`
 
@@ -253,7 +259,7 @@ Save changes.
 
 ### 7. Register users
 
-The bot enforces RBAC — every Slack user must be registered with a role before they can query. The `/users` API requires admin Basic Auth — create an admin first with `uv run python scripts/create_admin.py <username>`, then:
+The bot enforces RBAC — every Slack user must be registered before they can query. The `/users` API requires admin Basic Auth — create an admin first with `uv run python scripts/create_admin.py <username>`, then:
 
 ```bash
 # Register a user (replace values as needed)
@@ -261,12 +267,11 @@ curl -u admin:yourpassword -X POST http://localhost:8000/users \
   -H "Content-Type: application/json" \
   -d '{
     "employee_id": 1,
-    "role": "hr_manager",
     "slack_user_id": "U012AB3CD"
   }'
 ```
 
-Available roles: `cto_ceo`, `hr_manager`, `dept_head`, `team_lead`.
+`employee_id` is the person's `person.id` in the ERP. Access level (company-wide vs. own-records-only) is resolved automatically from ERP HR/Management group membership at request time — there is no role to set here.
 
 To find a user's Slack ID: open their Slack profile → **⋮** → **Copy member ID**.
 

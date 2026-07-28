@@ -37,15 +37,13 @@ If asked for any of these, respond only: "That information is not available."
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ROLE-BASED ACCESS CONTROL (ABSOLUTE RULES)
+ACCESS SCOPE (advisory — the database enforces this independently)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Every request includes an [Access control rules for this request] block.
-Read and enforce it before writing any SQL.
+Every request includes an [Access scope for this request] block. Use it to
+explain your answer to the user — do not try to enforce, widen, or work
+around it yourself.
 
 {rbac_prefix}
-
-- DATA SCOPE restrictions apply to every SQL query — add required WHERE/JOIN. No exceptions.
-- If a request falls outside your DATA SCOPE, respond explicitly: "You don't have access to that data." Do not attempt to query or return out-of-scope data.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 OPERATIONAL RULES:
@@ -94,36 +92,30 @@ Column name traps — commonly hallucinated wrong values:
 The full database schema is in the [Full schema context] block of every request."""
 
 
-_UNRESTRICTED_RBAC = """Current user role: UNRESTRICTED (full company-wide access).
+_UNRESTRICTED_RBAC = """Current user access: UNRESTRICTED (full company-wide access).
 All employees, departments, and teams are visible."""
 
-_RESTRICTED_RBAC = """Current user role: {role}
-{scope_description}
-Enforce the DATA SCOPE above on every query."""
+_SELF_RBAC = """Current user access: SELF.
+{hint}
+Results are automatically restricted to this user's own records before any
+query runs — do not attempt to widen, guess, or work around that restriction,
+and do not ask the user for an employee id to filter by."""
 
 
 def build_prefix(rbac_ctx) -> str:
     """
     Assemble the full system prefix for a given RBAC context.
 
-    rbac_ctx is None or unrestricted -> the shared, scope-free prefix.
-    rbac_ctx is a restricted role -> its scope_prompt() is embedded as
-    immutable system rules (not an advisory hint the LLM could ignore).
+    The scope text here is ADVISORY. It exists so the model produces sensible
+    answers and explanations for a SELF user, not to enforce anything —
+    enforcement is core.rbac.sql_guard.rewrite_sql at the db.run() call site,
+    which prompt injection cannot reach. Never put a person id or any other
+    scope value in this string.
     """
     if rbac_ctx is None or rbac_ctx.is_unrestricted:
         rbac_prefix = _UNRESTRICTED_RBAC
     else:
-        scope_lines = rbac_ctx.scope_prompt().splitlines()
-        # The base prefix already includes the forbidden-columns rule; drop that line
-        # here to avoid duplication. Retain ALL other scope/enforcement lines so
-        # required JOINs/filters (e.g. nsubteam_id, end_date IS NULL) are not lost.
-        scope_description = "\n".join(
-            ln for ln in scope_lines if ln.strip() and not ln.startswith("FORBIDDEN COLUMNS")
-        )
-        rbac_prefix = _RESTRICTED_RBAC.format(
-            role=rbac_ctx.role.value.upper().replace("_", " "),
-            scope_description=scope_description,
-        )
+        rbac_prefix = _SELF_RBAC.format(hint=rbac_ctx.scope_hint())
 
     return _BASE_PREFIX.format(
         forbidden_columns=_forbidden_columns_str(),

@@ -166,3 +166,16 @@ class TestSecretFields:
         # Guards against SecretStr("") accidentally being truthy, which would
         # skip the token_hex(32) fallback and leave SECRET_KEY empty.
         assert settings.SECRET_KEY.get_secret_value() != ""
+
+
+def test_rbac_group_defaults(monkeypatch):
+    _clear_guarded_env(monkeypatch)
+    monkeypatch.setenv("DEBUG", "true")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.HR_GROUP_ID == 12
+    assert settings.HR_GROUP_NAME == "Pod"
+    assert settings.MANAGEMENT_GROUP_ID == 13
+    assert settings.MANAGEMENT_GROUP_NAME == "Management"
+    assert settings.RBAC_CACHE_TTL_SECONDS == 900

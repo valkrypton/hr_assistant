@@ -1,12 +1,12 @@
 """
 Execution-based RBAC scope tests.
 
-Unlike test_rbac.py (which asserts on the *text* of the rewritten SQL), these
-tests seed a real database, run each restricted role's query through
-rewrite_sql, EXECUTE it, and assert on the ROWS returned. This is the layer
-that catches scope bypasses which produce syntactically-plausible SQL that
-still leaks data — e.g. the CROSS JOIN bypass, where "department_id = 3"
-appears in the query but is anchored to the wrong table.
+Unlike tests/test_sql_guard_self_scope.py (which asserts on the *text* of the
+rewritten SQL), these tests seed a real database, run rewrite_sql, EXECUTE
+the result, and assert on the ROWS returned. This is the layer that catches
+scope bypasses which produce syntactically-plausible SQL that still leaks
+data — e.g. the CROSS JOIN bypass, where a scope predicate appears in the
+query but is anchored to the wrong table.
 
 The guard emits Postgres-dialect SQL. By default it's transpiled to SQLite
 for hermetic, infra-free execution — the injected scope predicates (equality
@@ -17,8 +17,7 @@ dialect either way. Set TEST_DATABASE_URL to run this same suite against a
 real Postgres instance instead (no transpile) — see the postgres: service
 container in .github/workflows/ci.yml.
 
-Seed layout (team scope and department scope intentionally DIVERGE so an
-accidental dept<->team cross-wiring is caught):
+Seed layout:
 
     Departments: 3 (Engineering), 4 (Sales)
     Teams:       7 (Alpha),       8 (Beta)
@@ -29,10 +28,13 @@ accidental dept<->team cross-wiring is caught):
     103 Carol   4   team 7
     104 Dave    4   team 8
 
-    => dept 3   = {101, 102}
-       team 7   = {101, 103}   (crosses departments; excludes Alice's dead team-8 row)
-       team 8   = {102, 104}
-       everyone = {101, 102, 103, 104}
+    => everyone = {101, 102, 103, 104}
+
+Self-scope tests anchor on Alice (101). The dept/team divergence in the seed
+predates the two-level access model — it originally guarded against a
+dept<->team cross-wiring bug that no longer applies, but is kept because it
+still exercises the CROSS JOIN anchor bug: the guard must scope leave_record
+to Alice's own person_id regardless of what person is cross-joined in.
 """
 
 import os
@@ -41,8 +43,8 @@ import sqlite3
 import pytest
 import sqlglot
 
+from core.rbac.access import AccessLevel
 from core.rbac.context import RBACContext
-from core.rbac.roles import Role
 from core.rbac.sql_guard import rewrite_sql
 
 # When set, run this whole suite against real Postgres instead of transpiled
@@ -53,9 +55,8 @@ from core.rbac.sql_guard import rewrite_sql
 # SQLite exactly as before.
 _TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
-DEPT3_PERSONS = {101, 102}
-TEAM7_PERSONS = {101, 103}
-TEAM8_PERSONS = {102, 104}
+ALICE = 101
+ALICE_ONLY = {101}
 ALL_PERSONS = {101, 102, 103, 104}
 
 
@@ -175,110 +176,73 @@ def _ids(rows) -> set:
     return {r[0] for r in rows}
 
 
-def _ctx(role, dept=None, team=None):
-    return RBACContext(role=role, department_id=dept, team_id=team)
+def _ctx(person_id):
+    """Self-scoped context for the given person."""
+    return RBACContext(access_level=AccessLevel.SELF, person_id=person_id)
 
 
 # ---------------------------------------------------------------------------
-# Department head — sees only their own department, whatever the query shape
+# Self scope — sees only their own row, whatever the query shape
 # ---------------------------------------------------------------------------
 
 
-class TestDeptHeadExecution:
+class TestSelfScopeExecution:
     def test_direct_person_select(self, conn):
-        rows = _run(conn, "SELECT id, department_id FROM person", _ctx(Role.DEPT_HEAD, dept=3))
-        assert _ids(rows) == DEPT3_PERSONS
-        assert all(dept == 3 for _, dept in rows)
+        rows = _run(conn, "SELECT id, department_id FROM person", _ctx(ALICE))
+        assert _ids(rows) == ALICE_ONLY
 
     def test_cross_join_person_does_not_leak_fk_table(self, conn):
         # The CROSS JOIN bypass: person appears but is not linked to leave_record.
-        # Pre-fix this returned every department's leave rows.
+        # Pre-fix this returned every person's leave rows.
         rows = _run(
             conn,
             "SELECT lr.person_id FROM leave_record lr CROSS JOIN person p",
-            _ctx(Role.DEPT_HEAD, dept=3),
+            _ctx(ALICE),
         )
-        assert _ids(rows) <= DEPT3_PERSONS
-        assert 103 not in _ids(rows) and 104 not in _ids(rows)
+        assert _ids(rows) == ALICE_ONLY
 
     def test_fk_table_alone_is_scoped(self, conn):
-        rows = _run(conn, "SELECT person_id FROM leave_record", _ctx(Role.DEPT_HEAD, dept=3))
-        assert _ids(rows) == DEPT3_PERSONS
+        rows = _run(conn, "SELECT person_id FROM leave_record", _ctx(ALICE))
+        assert _ids(rows) == ALICE_ONLY
+
+    def test_person_team_fk_table_is_scoped(self, conn):
+        rows = _run(conn, "SELECT person_id FROM person_week_log", _ctx(ALICE))
+        assert _ids(rows) == ALICE_ONLY
 
     def test_or_injection_cannot_widen(self, conn):
         rows = _run(
             conn,
-            "SELECT id, department_id FROM person WHERE department_id = 4 OR 1=1",
-            _ctx(Role.DEPT_HEAD, dept=3),
+            "SELECT id, department_id FROM person WHERE id = 102 OR 1=1",
+            _ctx(ALICE),
         )
-        assert _ids(rows) == DEPT3_PERSONS
+        assert _ids(rows) == ALICE_ONLY
 
     def test_subquery_on_person_is_scoped(self, conn):
         rows = _run(
             conn,
             "SELECT lr.id FROM leave_record lr WHERE lr.person_id IN (SELECT id FROM person)",
-            _ctx(Role.DEPT_HEAD, dept=3),
+            _ctx(ALICE),
         )
-        # leave_record ids belong to dept-3 persons (101->1, 102->2)
-        assert _ids(rows) == {1, 2}
+        # leave_record row belonging to Alice (101) is id 1.
+        assert _ids(rows) == {1}
+
+    def test_missing_person_id_returns_nothing(self, conn):
+        """A SELF context with no person_id is misconfigured — deny, don't widen."""
+        broken = RBACContext(access_level=AccessLevel.SELF, person_id=None)
+        rows = _run(conn, "SELECT id FROM person", broken)
+        assert rows == []
 
 
 # ---------------------------------------------------------------------------
-# Team lead — sees only active members of their own team
-# ---------------------------------------------------------------------------
-
-
-class TestTeamLeadExecution:
-    def test_direct_person_select(self, conn):
-        rows = _run(conn, "SELECT id FROM person", _ctx(Role.TEAM_LEAD, team=7))
-        assert _ids(rows) == TEAM7_PERSONS
-
-    def test_fk_table_is_scoped(self, conn):
-        rows = _run(conn, "SELECT person_id FROM person_week_log", _ctx(Role.TEAM_LEAD, team=7))
-        assert _ids(rows) == TEAM7_PERSONS
-
-    def test_inactive_membership_excluded(self, conn):
-        # team 8 active members are {102, 104}; Alice's ended team-8 row must NOT
-        # pull 101 into team-8 scope.
-        rows = _run(conn, "SELECT id FROM person", _ctx(Role.TEAM_LEAD, team=8))
-        assert _ids(rows) == TEAM8_PERSONS
-        assert 101 not in _ids(rows)
-
-    def test_cross_join_person_does_not_leak(self, conn):
-        rows = _run(
-            conn,
-            "SELECT lr.person_id FROM leave_record lr CROSS JOIN person p",
-            _ctx(Role.TEAM_LEAD, team=7),
-        )
-        assert _ids(rows) <= TEAM7_PERSONS
-
-
-# ---------------------------------------------------------------------------
-# Unrestricted roles — full access, and NOT over-restricted
+# Unrestricted — full access, and NOT over-restricted
 # ---------------------------------------------------------------------------
 
 
 class TestUnrestrictedExecution:
-    @pytest.mark.parametrize("role", [Role.CTO_CEO, Role.HR_MANAGER])
-    def test_sees_all_people(self, conn, role):
-        rows = _run(conn, "SELECT id, department_id FROM person", _ctx(role))
+    def test_unrestricted_sees_all_people(self, conn):
+        rows = _run(conn, "SELECT id, department_id FROM person", RBACContext.unrestricted())
         assert _ids(rows) == ALL_PERSONS
 
     def test_none_ctx_sees_all(self, conn):
         rows = _run(conn, "SELECT person_id FROM leave_record", None)
         assert _ids(rows) == ALL_PERSONS
-
-
-# ---------------------------------------------------------------------------
-# Misconfigured restricted roles — deny all (1 = 0), never leak
-# ---------------------------------------------------------------------------
-
-
-class TestMisconfiguredDeniesAll:
-    def test_dept_head_no_dept_returns_nothing(self, conn):
-        rows = _run(conn, "SELECT id FROM person", _ctx(Role.DEPT_HEAD, dept=None))
-        assert rows == []
-
-    def test_team_lead_no_team_returns_nothing(self, conn):
-        rows = _run(conn, "SELECT person_id FROM leave_record", _ctx(Role.TEAM_LEAD, team=None))
-        assert rows == []

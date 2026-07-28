@@ -82,18 +82,19 @@ backed by a SQL agent against the company ERP.
 
 ---
 
-### FR-5  Role-Based Access Control
+### FR-5  Deterministic Access Control
+
+Full design: `docs/superpowers/specs/2026-07-27-deterministic-rbac-design.md`.
 
 | ID | Requirement |
 |----|-------------|
-| FR-5.1 | Identify the requesting user from their Slack identity |
-| FR-5.2 | Enforce four roles: **CTO/CEO**, **HR Manager**, **Department Head**, **Team Lead** |
-| FR-5.3 | CTO/CEO — full company-wide access: all workforce data, utilisation, bench time, attrition |
-| FR-5.4 | HR Manager — company-wide: employee details, skills, availability, leaves, utilisation, warnings, attrition |
-| FR-5.5 | Department Head — own department + cross-department reads: roster, skills, availability, utilisation, project history |
-| FR-5.6 | Team Lead — own team only: member names, skills, availability, current projects |
-| FR-5.7 | Silently restrict out-of-scope queries (return only data the requester is authorised to see, without disclosing that data was withheld) |
-| FR-5.8 | **Never expose** regardless of role: salary figures, bank details, personal addresses, personal phone numbers, medical records |
+| FR-5.1 | Identify the requesting user from their Slack identity, resolved to an ERP `person.id` |
+| FR-5.2 | Enforce two access levels, derived from ERP Django group membership at request time: **UNRESTRICTED** (HR or Management group member) and **SELF** (everyone else) |
+| FR-5.3 | UNRESTRICTED — full company-wide access: all workforce data, utilisation, bench time, attrition |
+| FR-5.4 | SELF — own records only: the requester's own person row and rows linked to it via `person_id` / `person_team_id` |
+| FR-5.5 | Silently restrict out-of-scope queries (return only data the requester is authorised to see, without disclosing that data was withheld) |
+| FR-5.6 | **Never expose** regardless of access level: salary figures, bank details, personal addresses, personal phone numbers, medical records |
+| FR-5.7 | Enforcement is deterministic SQL-layer rewriting (`core/rbac/sql_guard.py`), not LLM-prompt compliance — the prompt carries an advisory hint only |
 
 ---
 
