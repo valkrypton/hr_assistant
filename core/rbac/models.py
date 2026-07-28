@@ -50,6 +50,10 @@ class AdminUser(Base):
         return f"<AdminUser id={self.id} username={self.username} active={self.is_active}>"
 
 
+# DEPRECATED — this table/model registered Slack users for the old
+# Slack-identity RBAC path. Superseded by Google SSO login
+# (api/routes/auth.py), which resolves identity straight from the ERP with
+# no local registration step. Kept as-is; may be removed later.
 class HRUser(Base):
     __tablename__ = "hr_assistant_users"
     __table_args__ = (UniqueConstraint("slack_user_id", name="uq_hr_user_slack"),)

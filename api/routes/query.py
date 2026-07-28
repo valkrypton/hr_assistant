@@ -2,13 +2,13 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from api.deps import OptionalAdminDep
+from api.deps import SessionUserDep
 from api.schemas.query import QueryRequest, QueryResponse
-from api.services.query_service import resolve_scope, run_agent
+from api.services.query_service import resolve_scope_from_session, run_agent
 from core.executor import agent_executor
 from core.rbac.context import RBACContext
 
@@ -58,25 +58,28 @@ async def _stream_query(query: str, rbac_ctx: RBACContext | None) -> AsyncIterat
 
 
 @router.post("/query")
-async def run_query(body: QueryRequest, admin: OptionalAdminDep) -> StreamingResponse:
+async def run_query(body: QueryRequest, session_person_id: SessionUserDep) -> StreamingResponse:
     """
     Natural-language HR query endpoint — streamed over Server-Sent Events.
 
-    Requires admin HTTP Basic auth unless ALLOW_UNAUTHENTICATED_QUERY=true
-    (local dev). slack_user_id selects the RBAC scope to apply — it is not an
-    identity proof; end-user traffic goes through the signed Slack webhook.
-
-    - No slack_user_id: runs without RBAC. Allowed only for an authenticated
-      admin or when ALLOW_UNAUTHENTICATED_QUERY=true — require_admin_unless_open
-      has already enforced this, so no further auth check is needed here.
-    - With slack_user_id: enforces RBAC based on the user's registered role.
+    Identity comes exclusively from a valid Google-SSO session cookie
+    (api/routes/auth.py) — the requester IS this person_id, proven by the
+    cookie. No session cookie means no proven identity, so the request is
+    denied (401) outright; there is no admin-Basic-Auth or slack_user_id
+    fallback for this endpoint. (The admin panel's own auth in api/deps.py
+    and the Slack bot's own identity resolution in adapters/slack.py are
+    separate, self-contained flows — neither is wired into /query.)
 
     Response is `text/event-stream`: an immediate `status` event, periodic
     `: heartbeat` comments while the agent runs, then exactly one of
     `answer` or `error`.
     """
-    # Fast checks (empty query / unregistered Slack user) run on Starlette's
-    # default threadpool — quick enough to share it — and raise HTTPException
-    # for a normal HTTP 400/403 response before any streaming starts.
-    rbac_ctx = await run_in_threadpool(resolve_scope, body)
+    if session_person_id is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated. Sign in with your Google Workspace account.",
+        )
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="Query must not be empty.")
+    rbac_ctx = await run_in_threadpool(resolve_scope_from_session, session_person_id)
     return StreamingResponse(_stream_query(body.query, rbac_ctx), media_type="text/event-stream")

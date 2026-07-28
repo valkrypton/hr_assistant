@@ -1,4 +1,8 @@
 """
+DEPRECATED — superseded by Google SSO login (api/routes/auth.py). Kept as-is
+for now; may be removed later. New end-user access should go through the
+session-cookie path in api/routes/query.py, not Slack registration.
+
 Slack adapter — receives Events API payloads, enforces RBAC, and posts Block Kit replies.
 
 Responsibilities

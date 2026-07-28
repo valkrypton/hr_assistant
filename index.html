@@ -209,6 +209,7 @@
   <h1>HR Assistant</h1>
   <span>local</span>
   <div id="status-dot" title="API health"></div>
+  <a id="sso-login-link" href="#" style="margin-left:auto;font-size:13px;">Sign in with Google</a>
 </header>
 
 <main>
@@ -247,6 +248,20 @@
   const dot     = document.getElementById('status-dot');
   const apiUrl  = document.getElementById('api-url');
 
+  const ssoLink = document.getElementById('sso-login-link');
+  function updateSsoLink() {
+    ssoLink.href = apiUrl.value.replace(/\/+$/, '') + '/auth/login';
+  }
+  updateSsoLink();
+  apiUrl.addEventListener('input', updateSsoLink);
+
+  // Surfaced by the backend redirecting with ?error=not_registered, if
+  // POST_LOGIN_REDIRECT_URL is configured to point back at this page.
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('error') === 'not_registered') {
+    chat.innerHTML = '<p style="color:#b00">Your Google account is not registered in the HR system. Contact HR.</p>';
+  }
+
   // Auto-grow textarea
   input.addEventListener('input', () => {
     input.style.height = 'auto';
@@ -265,16 +280,11 @@
     input.focus();
   }
 
-  // Admin Basic Auth credentials for /query. Kept in memory ONLY — never
-  // written to localStorage/sessionStorage — so they vanish on reload.
-  let creds = null;
-
   function postQuery(base, q) {
-    const headers = { 'Content-Type': 'application/json' };
-    if (creds) headers['Authorization'] = 'Basic ' + btoa(creds.user + ':' + creds.pass);
     return fetch(base + '/query', {
       method: 'POST',
-      headers,
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include', // send the Google-SSO session cookie — the only auth /query accepts
       body: JSON.stringify({ query: q }),
     });
   }
@@ -344,26 +354,15 @@
       let res = await postQuery(base, q);
 
       if (res.status === 401) {
-        // /query always requires admin Basic Auth — ask once and retry.
-        const user = prompt('Admin username:');
-        const pass = user !== null ? prompt('Admin password:') : null;
-        if (user === null || pass === null) {
-          thinking.remove();
-          addBubble('Admin credentials are required to query.', 'error');
-          return;
-        }
-        creds = { user, pass };
-        res = await postQuery(base, q);
-        if (res.status === 401) {
-          creds = null;
-          thinking.remove();
-          addBubble('Invalid admin credentials', 'error');
-          return;
-        }
+        // /query requires a Google-SSO session cookie — nothing else is
+        // accepted, so there's no credential prompt to retry with here.
+        thinking.remove();
+        addBubble('Please sign in with Google first.', 'error');
+        return;
       }
 
       if (!res.ok) {
-        // 400 (empty query) / 403 (unregistered user) — plain JSON error,
+        // 400 (empty query) / 403 (not provisioned) — plain JSON error,
         // returned before any streaming starts.
         const data = await res.json().catch(() => ({}));
         thinking.remove();

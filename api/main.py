@@ -7,23 +7,25 @@ registration.  All route logic lives in api/routes/.
 
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from sqladmin import Admin
 from sqladmin.authentication import AuthenticationBackend
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request as StarletteRequest
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from api.admin import HRUserAdmin
 from api.auth import verify_password
 from api.deps import app_engine
-from api.routes import health, query, slack, users
+from api.routes import auth, health, query, slack, users
 from core.agent import get_agent
 from core.config import settings
 from core.executor import agent_executor
@@ -96,10 +98,23 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.TRUSTED_PROXY_
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allow_origins,
+    allow_credentials=True,
     # Only the methods/headers the API actually uses — the admin panel is
     # browsed same-origin and isn't affected by CORS at all.
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
+)
+
+# Required by Authlib's Starlette OAuth client, which stores the OAuth
+# state/nonce in request.session during the login redirect round-trip
+# (api/routes/auth.py). Separate from SQLAdmin's own internal
+# SessionMiddleware, which sqladmin.Admin() scopes only to its /admin
+# sub-app — this one covers the rest of the app (/auth/*).
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.SECRET_KEY.get_secret_value(),
+    same_site="lax",
+    https_only=not settings.DEBUG,
 )
 
 _SECURITY_HEADERS = {
@@ -176,9 +191,21 @@ admin.add_view(HRUserAdmin)
 # ---------------------------------------------------------------------------
 
 app.include_router(health.router)
+app.include_router(auth.router)
 app.include_router(query.router)
 app.include_router(users.router)
 app.include_router(slack.router)
+
+# Serves index.html same-origin with the API — avoids the CORS/SameSite
+# dev friction of opening it via file:// or a separate static server (the
+# Google-SSO session cookie is SameSite=Lax, so it's only ever attached to
+# same-site requests; file:// has no site of its own to match).
+_INDEX_HTML_PATH = Path(__file__).resolve().parent.parent / "index.html"
+
+
+@app.get("/", include_in_schema=False)
+async def serve_index() -> FileResponse:
+    return FileResponse(_INDEX_HTML_PATH)
 
 
 # ---------------------------------------------------------------------------

@@ -70,11 +70,14 @@ Edit `.env`:
 | `MANAGEMENT_GROUP_ID` | ERP `auth_group.id` of the Management group (default 13) — members get company-wide access |
 | `HR_GROUP_NAME` / `MANAGEMENT_GROUP_NAME` | Descriptive names for the IDs above (informational; not verified against the ERP) |
 | `RBAC_CACHE_TTL_SECONDS` | How long a resolved access level is cached (default 900) |
-| `SLACK_BOT_TOKEN` | Slack bot OAuth token (`xoxb-…`) |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth client credentials for SSO login (console.cloud.google.com) |
+| `GOOGLE_WORKSPACE_DOMAIN` | Only Google accounts on this domain may log in (default `arbisoft.com`), enforced server-side |
+| `SESSION_COOKIE_MAX_AGE_SECONDS` | How long a login session cookie lasts (default 28800 = 8h) |
+| `POST_LOGIN_REDIRECT_URL` | Where to send the browser after login; empty shows an inline confirmation page instead |
+| `SLACK_BOT_TOKEN` | Slack bot OAuth token (`xoxb-…`) — Slack login is deprecated, superseded by Google SSO |
 | `SLACK_SIGNING_SECRET` | Slack signing secret for request verification |
 | `SECRET_KEY` | Signs admin session cookies (`/admin` panel). Required in production (startup error when `DEBUG=false` and unset) — generate with `openssl rand -hex 32` |
-| `DEBUG` | Default `false`. `true` enables verbose agent logging, console-format logs, and the dev-only allowances below |
-| `ALLOW_UNAUTHENTICATED_QUERY` | Dev-only. `true` lets `POST /query` run without admin auth. Startup `RuntimeError` if `true` while `DEBUG=false` (`core/config.py:146-153`) |
+| `DEBUG` | Default `false`. `true` enables verbose agent logging and console-format logs |
 | `CORS_ALLOW_ORIGINS` | Comma-separated browser origins. Default `*` — wildcard is forbidden in production (startup error when `DEBUG=false`, `core/config.py:174-181`) |
 | `TRUSTED_PROXY_HOSTS` | Proxy/load-balancer hosts trusted for `X-Forwarded-*` headers (default `127.0.0.1`) |
 
@@ -129,8 +132,10 @@ INCLUDED_TABLES=department,employment_type,competency_role,competency_level,desi
 
 ```bash
 uv run uvicorn api.main:app --reload
-open index.html    # or just open in your browser — no server needed
+open http://localhost:8000    # FastAPI serves index.html itself, same-origin
 ```
+
+Open `index.html` directly (`file://…`) or from a separate dev server instead, if you prefer — but `/query`'s Google-SSO session cookie is `SameSite=Lax`, so it won't be attached to cross-site requests from either of those. Loading the page from `http://localhost:8000` avoids that entirely.
 
 - API: `http://localhost:8000`
 - Docs: `http://localhost:8000/docs`
@@ -141,15 +146,13 @@ open index.html    # or just open in your browser — no server needed
 
 ### `POST /query`
 
-Natural-language HR query. **Requires admin HTTP Basic Auth by default** (`require_admin_unless_open`, `api/deps.py:57-69`); `ALLOW_UNAUTHENTICATED_QUERY=true` is a dev-only override — the server refuses to start with it in production (`DEBUG=false` → startup `RuntimeError`). When auth is on, the bundled `index.html` prompts for credentials on the first 401 and keeps them in memory only.
-
-`slack_user_id` in the body selects the RBAC scope of a *registered* user — it is **NOT authentication** (Slack IDs are public within a workspace). **If you omit `slack_user_id`, the query runs unrestricted** (no RBAC scoping) — be deliberate about that. End-user traffic should go through the signature-verified Slack webhook instead.
+Natural-language HR query. Requires a valid Google-SSO session cookie (`GET /auth/login`, `api/routes/auth.py`) — that's the *only* auth this endpoint accepts; there is no admin-Basic-Auth fallback and no `slack_user_id` field. RBAC scope is resolved fresh from the ERP for the signed-in person on every call (`api/services/query_service.py::resolve_scope_from_session`). End-user Slack traffic goes through the separate, signature-verified Slack webhook (`api/routes/slack.py`, `adapters/slack.py`) instead — it resolves identity on its own and isn't wired into this endpoint.
 
 ```bash
 curl -X POST http://localhost:8000/query \
-  -u admin:yourpassword \
   -H "Content-Type: application/json" \
-  -d '{"query": "How many employees do we have?", "slack_user_id": "U012AB3CD"}'
+  -b "hr_session=<cookie value from a signed-in browser session>" \
+  -d '{"query": "How many employees do we have?"}'
 ```
 
 ### `/users`

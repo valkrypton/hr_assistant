@@ -1,5 +1,8 @@
-"""#4 DIP — verify resolve_scope/run_agent accept injected collaborators
-without touching the real agent or DB."""
+"""#4 DIP — verify resolve_scope_from_session/run_agent accept injected
+collaborators without touching the real agent or DB."""
+
+import pytest
+from fastapi import HTTPException
 
 from core.agent import AgentQueryResult
 from core.rbac.access import AccessLevel
@@ -31,25 +34,27 @@ def test_run_agent_uses_injected_agent():
     assert captured["ctx"] is ctx
 
 
-def test_resolve_scope_uses_injected_repo_and_resolver():
-    from api.schemas.query import QueryRequest
-    from api.services.query_service import resolve_scope
-
-    class FakeUser:
-        employee_id = 1
-
-    class FakeRepo:
-        @staticmethod
-        def get_by_slack_user_id(session, slack_user_id):
-            return FakeUser()
+def test_resolve_scope_from_session_uses_injected_resolver():
+    from api.services.query_service import resolve_scope_from_session
 
     def fake_resolve_ctx(person_id):
         identity = ErpIdentity(person_id=person_id, auth_user_id=999, group_ids=frozenset({12}))
         return RBACContext.for_identity(identity, AccessLevel.UNRESTRICTED)
 
-    body = QueryRequest(query="hi", slack_user_id="U123")
-    ctx = resolve_scope(body, repo=FakeRepo(), resolve_ctx=fake_resolve_ctx)
+    ctx = resolve_scope_from_session(1, resolve_ctx=fake_resolve_ctx)
 
-    assert ctx is not None
     assert ctx.is_unrestricted is True
     assert ctx.person_id == 1
+
+
+def test_resolve_scope_from_session_denies_when_resolver_returns_none():
+    """No active ERP identity for this person_id — must be denied (403),
+    never silently unrestricted."""
+    from api.services.query_service import resolve_scope_from_session
+
+    def fake_resolve_ctx(person_id):
+        return None
+
+    with pytest.raises(HTTPException) as exc_info:
+        resolve_scope_from_session(1, resolve_ctx=fake_resolve_ctx)
+    assert exc_info.value.status_code == 403

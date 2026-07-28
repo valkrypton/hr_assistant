@@ -1,3 +1,5 @@
+# DEPRECATED — registers users for the old Slack-identity RBAC path, superseded
+# by Google SSO login (api/routes/auth.py). Kept as-is; may be removed later.
 from fastapi import APIRouter, Depends
 
 from api.deps import DbDep, require_admin

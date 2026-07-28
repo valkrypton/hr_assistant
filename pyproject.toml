@@ -52,6 +52,9 @@ dependencies = [
 
     # SQL rewriting for RBAC scope enforcement
     "sqlglot>=20.0,<31",
+
+    # Google Workspace SSO login
+    "authlib>=1.7.2",
 ]
 
 [dependency-groups]

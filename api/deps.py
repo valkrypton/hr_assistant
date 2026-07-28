@@ -9,15 +9,16 @@ from collections.abc import Iterator
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Security
+from fastapi import Depends, HTTPException, Request, Security
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy.orm import Session
 
 from api.auth import (
+    SESSION_COOKIE_NAME,
     hash_password,
+    read_session_cookie,
     verify_password,
 )
-from core.config import settings
 from core.db import app_engine, db_session, erp_engine
 from core.rbac.models import AdminUser
 
@@ -64,19 +65,16 @@ def require_admin(credentials: HTTPBasicCredentials | None = Security(_basic_aut
     return admin
 
 
-def require_admin_unless_open(
-    credentials: HTTPBasicCredentials | None = Security(_basic_auth),
-) -> AdminUser | None:
-    """
-    /query guard. slack_user_id in the request body selects an RBAC scope but
-    is NOT proof of identity (Slack IDs are public within a workspace), so the
-    request must be vouched for by admin credentials — unless
-    ALLOW_UNAUTHENTICATED_QUERY explicitly opts into open access (local dev).
-    Production RBAC traffic goes through the signature-verified Slack webhook.
-    """
-    if settings.ALLOW_UNAUTHENTICATED_QUERY:
+def get_session_user(request: Request) -> int | None:
+    """Resolve the requester's person_id from the session cookie set by
+    /auth/callback, or None if absent/invalid/expired."""
+    cookie = request.cookies.get(SESSION_COOKIE_NAME)
+    if cookie is None:
         return None
-    return require_admin(credentials)
+    return read_session_cookie(cookie)
+
+
+SessionUserDep = Annotated[int | None, Depends(get_session_user)]
 
 
 def get_db() -> Iterator[Session]:
@@ -87,4 +85,3 @@ def get_db() -> Iterator[Session]:
 
 
 DbDep = Annotated[Session, Depends(get_db)]
-OptionalAdminDep = Annotated[AdminUser | None, Depends(require_admin_unless_open)]

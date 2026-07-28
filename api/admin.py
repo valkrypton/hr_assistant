@@ -16,6 +16,8 @@ from core.rbac.models import HRUser
 BooleanInputWidget.validation_attrs = ["required", "disabled"]
 
 
+# DEPRECATED — admin UI for the old Slack-identity RBAC path, superseded by
+# Google SSO login (api/routes/auth.py). Kept as-is; may be removed later.
 class HRUserAdmin(ModelView, model=HRUser):
     name = "User"
     name_plural = "Users"
