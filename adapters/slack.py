@@ -6,7 +6,8 @@ Responsibilities
 - Verify X-Slack-Signature on every inbound request (HMAC-SHA256).
 - Handle the URL-verification challenge sent during app setup.
 - Parse app_mention and message.im events to extract user + text.
-- Look up the HRUser for the Slack user ID and build an RBACContext.
+- Look up the HRUser for the Slack user ID, resolve its ERP access level, and
+  build an RBACContext.
 - Call core.agent.query() and post the answer as a Block Kit card in-thread.
 
 Slack's 3-second rule
@@ -29,14 +30,14 @@ import certifi
 import structlog
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from core.agent import query as agent_query
 from core.config import settings
 from core.db import db_session
-from core.rbac.context import RBACContext
 from core.rbac.models import SlackSeenEvent
 from core.rbac.repository import HRUserRepository
+from core.rbac.resolution import resolve_context
 
 logger = structlog.get_logger(__name__)
 
@@ -298,19 +299,32 @@ def process_event(
             pass
         return
 
-    if not hr_user.role:
-        logger.warning("slack_user_missing_role", slack_user_id=slack_user_id)
+    # employee_id IS person.id — see core/rbac/models.py.
+    try:
+        rbac_ctx = resolve_context(hr_user.employee_id)
+    except SQLAlchemyError as exc:
+        logger.warning("slack_rbac_resolution_failed", slack_user_id=slack_user_id, error=str(exc))
         try:
             client.chat_postMessage(
                 channel=channel,
                 thread_ts=thread_ts,
-                text="Your account has no role assigned. Please ask your HR admin to set your role.",
+                text="I can't verify your access right now. Please try again in a minute.",
             )
         except Exception:
             pass
         return
 
-    rbac_ctx = RBACContext.for_user(hr_user)
+    if rbac_ctx is None:
+        logger.warning("slack_user_not_provisioned", slack_user_id=slack_user_id)
+        try:
+            client.chat_postMessage(
+                channel=channel,
+                thread_ts=thread_ts,
+                text="Your ERP account is inactive or not provisioned. Please contact HR.",
+            )
+        except Exception:
+            pass
+        return
 
     # Bot's own user ID — used to identify its messages in the thread.
     t_history = time.monotonic()

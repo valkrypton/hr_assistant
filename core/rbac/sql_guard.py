@@ -1,5 +1,5 @@
 """
-SQL-layer scope enforcement for restricted RBAC roles.
+SQL-layer scope enforcement for AccessLevel.SELF requesters.
 
 Every SQL statement the LLM generates is passed through rewrite_sql()
 before hitting the database.  This runs at the db.run() call site, so
@@ -7,10 +7,10 @@ it fires regardless of what the LLM was told in its prompt — prompt
 injection cannot bypass it.
 
 Rewriting rather than blocking is intentional: even if the LLM emits
-  WHERE department_id = 3 OR 1=1
+  WHERE id = 1 OR 1=1
 the rewrite produces
-  WHERE (department_id = 3 OR 1=1) AND department_id = 3
-which correctly restricts the result set to the user's department.
+  WHERE (id = 1 OR 1=1) AND person.id = 42
+which correctly restricts the result set to the requester's own row.
 """
 
 from __future__ import annotations
@@ -219,9 +219,10 @@ def rewrite_sql(sql: str, rbac_ctx: RBACContext | None) -> str:
     person table or a person-linked table (person_id / person_team_id FK).
 
     Non-SELECT and forbidden-column blocking applies to ALL callers including
-    None ctx and unrestricted roles — nobody may run INSERT/UPDATE/DELETE/DROP
-    or read salary/NIC/DOB-class columns.  Scope injection is only applied for
-    restricted roles (dept_head, team_lead).
+    None ctx and unrestricted access levels — nobody may run
+    INSERT/UPDATE/DELETE/DROP or read salary/NIC/DOB-class columns.  Scope
+    injection is only applied for AccessLevel.SELF requesters; UNRESTRICTED
+    (HR / Management group members) get no row predicates.
 
     Returns the rewritten SQL string.  Raises ValueError on parse errors
     or non-SELECT statements (the LangChain agent surfaces these as tool
@@ -316,9 +317,7 @@ def _inject_scope_into_tree(tree: exp.Expression, rbac_ctx: RBACContext) -> None
         # Scope the person table itself if present.
         alias = _person_alias(select)
         if alias is not None:
-            scope_sql = _scope_sql(rbac_ctx, alias)
-            if scope_sql:
-                _inject_and(select, scope_sql)
+            _inject_and(select, _scope_sql(rbac_ctx, alias))
         # Independently scope every person-linked table in this SELECT,
         # regardless of whether person is also present.  A spurious or
         # cartesian join to person (CROSS JOIN person, JOIN person ON 1=1)
@@ -368,67 +367,32 @@ def _person_alias(select: exp.Select) -> str | None:
     return None
 
 
-def _scope_sql(rbac_ctx: RBACContext, person_alias: str) -> str | None:
-    role = rbac_ctx.role.value
-
-    if role == "dept_head":
-        if rbac_ctx.department_id is None:
-            return "1 = 0"
-        dept_id = int(rbac_ctx.department_id)
-        return f"{person_alias}.department_id = {dept_id}"
-
-    if role == "team_lead":
-        if rbac_ctx.team_id is None:
-            return "1 = 0"
-        team_id = int(rbac_ctx.team_id)
-        return (
-            f"{person_alias}.id IN ("
-            f"SELECT person_id FROM person_team "
-            f"WHERE nsubteam_id = {team_id} "
-            f"AND end_date IS NULL AND is_active = true"
-            f")"
-        )
-
-    # Unknown restricted role — deny all person data.
-    return "1 = 0"
+def _self_person_id(rbac_ctx: RBACContext) -> int | None:
+    """The single person id a restricted requester may see, or None when the
+    context is misconfigured (caller must then deny all)."""
+    person_id = rbac_ctx.person_id
+    return int(person_id) if person_id is not None else None
 
 
-def _scoped_person_ids_sql(rbac_ctx: RBACContext) -> str | None:
-    """Subquery yielding the person ids visible to this restricted role,
-    or None when the role is misconfigured (caller must deny all)."""
-    role = rbac_ctx.role.value
-
-    if role == "dept_head":
-        if rbac_ctx.department_id is None:
-            return None
-        return f"SELECT id FROM person WHERE department_id = {int(rbac_ctx.department_id)}"
-
-    if role == "team_lead":
-        if rbac_ctx.team_id is None:
-            return None
-        return (
-            f"SELECT person_id FROM person_team "
-            f"WHERE nsubteam_id = {int(rbac_ctx.team_id)} "
-            f"AND end_date IS NULL AND is_active = true"
-        )
-
-    return None
+def _scope_sql(rbac_ctx: RBACContext, person_alias: str) -> str:
+    person_id = _self_person_id(rbac_ctx)
+    if person_id is None:
+        return "1 = 0"
+    return f"{person_alias}.id = {person_id}"
 
 
 def _fk_scope_sql(rbac_ctx: RBACContext, alias: str, fk_column: str) -> str:
-    person_ids = _scoped_person_ids_sql(rbac_ctx)
-    if person_ids is None:
+    person_id = _self_person_id(rbac_ctx)
+    if person_id is None:
         return "1 = 0"
-    return f"{alias}.{fk_column} IN ({person_ids})"
+    return f"{alias}.{fk_column} = {person_id}"
 
 
 def _person_team_fk_scope_sql(rbac_ctx: RBACContext, alias: str) -> str:
-    person_ids = _scoped_person_ids_sql(rbac_ctx)
-    if person_ids is None:
+    person_id = _self_person_id(rbac_ctx)
+    if person_id is None:
         return "1 = 0"
-    return (
-        f"{alias}.person_team_id IN (SELECT id FROM person_team WHERE person_id IN ({person_ids}))"
-    )
+    return f"{alias}.person_team_id IN (SELECT id FROM person_team WHERE person_id = {person_id})"
 
 
 def _inject_and(select: exp.Select, scope_sql: str) -> None:

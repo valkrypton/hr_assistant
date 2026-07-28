@@ -116,17 +116,14 @@ Restart the server after saving.
 
 ## Step 8 — Register Users
 
-Every person who will use HR Assistant must be registered with a role. This controls what data they are allowed to see.
+Every person who will use HR Assistant must be registered with their Slack ID. Access level (company-wide vs. own-records-only) is *not* set here — it's resolved automatically from the person's HR/Management group membership in the ERP at request time (see `docs/superpowers/specs/2026-07-27-deterministic-rbac-design.md`).
 
 **Option A — Admin Panel (recommended)**
 1. Go to **http://your-server/admin**
 2. Click **HR Users** → **Create**
 3. Fill in:
-   - **Employee ID** — the person's ID in the ERP system
-   - **Role** — their access level (see table below)
+   - **Employee ID** — the person's ID in the ERP system (`person.id`)
    - **Slack User ID** — found in Slack by clicking their profile → three-dot menu → **Copy member ID** (starts with `U`)
-   - **Department ID** — required for Department Head role
-   - **Team ID** — required for Team Lead role
 
 **Option B — API**
 
@@ -137,21 +134,11 @@ curl -u <admin>:<password> -X POST https://your-server/users \
   -H "Content-Type: application/json" \
   -d '{
     "employee_id": 42,
-    "role": "hr_manager",
     "slack_user_id": "U07A2RVUMBJ"
   }'
 ```
 
-**Role reference:**
-
-| Role value | Who gets it | What they see |
-|------------|-------------|---------------|
-| `cto_ceo` | CEO, CTO | Full company-wide access |
-| `hr_manager` | HR team members | Full company-wide access |
-| `dept_head` | Department heads | Their department only |
-| `team_lead` | Team leads | Their team only |
-
-> Users who send a message without being registered will get no response. Register them first.
+> Users who send a message without being registered will get no response. Register them first. A registered user whose ERP `person.id` isn't found (or is inactive) will also get no response — they need a valid, active ERP account, not just a row here.
 
 ---
 

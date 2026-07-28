@@ -88,7 +88,7 @@ Two separate PostgreSQL connections:
 - `APP_DATABASE_URL` — writable app database (users); required, no fallback
 
 **RBAC** (`core/rbac/`):
-Four roles: `cto_ceo`, `hr_manager`, `dept_head`, `team_lead`. Each role scopes what the agent may reveal. Forbidden columns (salary, NIC, DOB, etc.) are injected into every prompt regardless of role. Scope is enforced at the DB layer by `core/rbac/sql_guard.py` and proven by `tests/test_scope_execution.py`. Future enforcement directions (Postgres RLS, typed tools) are in [docs/rbac-hardening-roadmap.md](docs/rbac-hardening-roadmap.md).
+Two access levels, resolved from ERP Django group membership at request time, not stored locally: `UNRESTRICTED` (member of the HR or Management group — `core/rbac/access.py`) and `SELF` (everyone else — own records only). Identity resolution (`core/rbac/resolution.py`, `core/rbac/erp_identity.py`) maps `person.id` to its access level via a TTL-cached ERP read; every failure denies rather than degrading to wider access. Forbidden columns (salary, NIC, DOB, etc.) are injected into every prompt regardless of access level, but that's advisory — actual enforcement is SQL-layer rewriting in `core/rbac/sql_guard.py`, immune to prompt injection, proven by `tests/test_sql_guard_self_scope.py` and `tests/test_scope_execution.py`. Full design: [docs/superpowers/specs/2026-07-27-deterministic-rbac-design.md](docs/superpowers/specs/2026-07-27-deterministic-rbac-design.md). Future enforcement directions (Postgres RLS, typed tools) are in [docs/rbac-hardening-roadmap.md](docs/rbac-hardening-roadmap.md).
 
 **Slack adapter** (`adapters/slack.py`):
 Verifies `X-Slack-Signature`, acks within 3 s, runs the agent in a FastAPI `BackgroundTask`, and posts Block Kit replies in-thread.
