@@ -7,8 +7,7 @@ access; everyone else is restricted to their own records.
 Group IDs are configured, never names: the ERP has 28 groups whose names match
 "pod" or "manage" (Advanced POD Permissions, POD Reminder Group, Management
 Permissions, Leave Management, ...), so any fuzzy match would grant
-unrestricted access to the wrong population. Name drift is caught at boot by
-assert_rbac_groups_exist in core/rbac/erp_identity.py, not here.
+unrestricted access to the wrong population.
 """
 
 from __future__ import annotations

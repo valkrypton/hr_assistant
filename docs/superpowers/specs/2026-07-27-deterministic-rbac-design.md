@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-27
 **Branch:** `feat/deterministic-rbac`
-**Status:** Design approved, not yet implemented
+**Status:** Implemented
 
 ## Problem
 
